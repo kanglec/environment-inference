@@ -220,4 +220,3 @@ needed to judge it:
 Do not claim a result from a pending, failed, stale, or unvalidated campaign.
 Do not hide a sampled fallback, regularized TNMC conditional, poor mixing,
 large inner-bias envelope, or inadequate finite-size range.
-
