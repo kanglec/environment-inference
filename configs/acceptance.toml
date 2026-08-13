@@ -1,0 +1,60 @@
+schema_version = 1
+
+[campaign]
+name = "acceptance-L4-L6-L8"
+preset = "comparison"
+seed = 11160318154034397263
+output_root = "../artifacts/acceptance"
+project_root = ".."
+scratch_root = "../scratch/acceptance"
+
+[lattice]
+sizes = [4, 6, 8]
+lt_factor = 4
+regularization = "trotter"
+delta_tau = 0.25
+
+[protocols]
+noises = ["z", "zz"]
+p_values = [0.1, 0.3]
+measurements = ["heterodyne", "homodyne", "local-x"]
+gaussian_fractions = [0.0, 0.5]
+
+[mc]
+enabled = true
+outer_records = 96
+clean_thermalization_sweeps = 1000
+clean_saving_interval = 30
+posterior_decorrelation_gap = 100
+inner_measurements = 128
+inner_saving_interval = 4
+updates = ["corrected-wolff", "tnmc"]
+separations = "all"
+inner_budget_multipliers = [1, 2, 4]
+diagnostic_outer_records = 8
+replicated_chains = 4
+tnmc_bond_dimension = 16
+
+[ed]
+enabled = true
+max_sites = 8
+gaussian_outer_records = 128
+local_x_enumeration_limit = 14
+sampled_binary_records = 256
+priors = ["quantum", "finite-transfer", "transfer-ground"]
+positivity_tolerance = 1e-11
+
+[statistics]
+bootstrap_resamples = 500
+block_length = 4
+confidence = 0.95
+
+[cluster]
+scheduler = "slurm"
+partition = "day"
+account = "SET_BOUCHET_ACCOUNT"
+time_limit = "02:00:00"
+cpus_per_task = 1
+memory = "8G"
+python_module = "Python/3.12.3-GCCcore-13.3.0"
+rust_module = "Rust/1.96.1-GCCcore-13.3.0"

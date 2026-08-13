@@ -1,0 +1,59 @@
+schema_version = 1
+
+[campaign]
+name = "local-smoke"
+preset = "test"
+seed = 42
+output_root = "../artifacts/local-smoke"
+project_root = ".."
+scratch_root = "../scratch/local-smoke"
+
+[lattice]
+sizes = [4]
+lt_factor = 2
+regularization = "isotropic"
+
+[protocols]
+noises = ["z", "zz"]
+p_values = [0.1]
+measurements = ["heterodyne", "homodyne", "local-x"]
+gaussian_fractions = [0.5]
+
+[mc]
+enabled = true
+outer_records = 16
+clean_thermalization_sweeps = 100
+clean_saving_interval = 10
+posterior_decorrelation_gap = 20
+inner_measurements = 32
+inner_saving_interval = 2
+updates = ["metropolis", "corrected-wolff", "tnmc"]
+separations = "all"
+inner_budget_multipliers = [1, 2, 4]
+diagnostic_outer_records = 4
+replicated_chains = 2
+tnmc_bond_dimension = 8
+
+[ed]
+enabled = true
+max_sites = 4
+gaussian_outer_records = 64
+local_x_enumeration_limit = 14
+sampled_binary_records = 128
+priors = ["quantum", "finite-transfer", "transfer-ground"]
+positivity_tolerance = 1e-11
+
+[statistics]
+bootstrap_resamples = 100
+block_length = 2
+confidence = 0.95
+
+[cluster]
+scheduler = "slurm"
+partition = "day"
+account = "SET_BOUCHET_ACCOUNT"
+time_limit = "00:30:00"
+cpus_per_task = 1
+memory = "2G"
+python_module = "Python/3.12.3-GCCcore-13.3.0"
+rust_module = "Rust/1.96.1-GCCcore-13.3.0"

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "decohered-cft-ed"
+version = "0.1.0"
+description = "Small-system exact diagonalization tools for decohered TFIM states"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0",
+]
+
+[project.scripts]
+dcft-ed-study = "decohered_cft_ed.study:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/decohered_cft_ed"]

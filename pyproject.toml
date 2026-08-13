@@ -1,0 +1,79 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dcft-simulation"
+version = "0.1.0"
+description = "Unified Monte Carlo and exact-diagonalization campaigns for decohered CFT inference"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "MIT"
+authors = [{ name = "Kang-Le Cai" }]
+dependencies = [
+  "matplotlib>=3.10,<4",
+  "numpy>=2.2,<3",
+  "pyarrow>=19,<22",
+  "scipy>=1.15,<2",
+]
+
+[project.scripts]
+dcft = "dcft.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "maturin>=1.9,<2",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "dcft._core"
+features = ["extension-module"]
+include = ["configs/*.toml", "README.md", "uv.lock", "Cargo.lock"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = "-ra --strict-config --strict-markers"
+markers = [
+  "acceptance: complete local scientific acceptance campaign",
+  "slow: tests that run longer than the unit-test suite",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["python", "tests/python"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "PTH", "ARG"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG001", "PLR2004"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["dcft"]
+mypy_path = "python"
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "scipy.*", "matplotlib.*"]
+ignore_missing_imports = true
+
+[tool.uv]
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+  "maturin>=1.9,<2",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]

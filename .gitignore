@@ -1,0 +1,13 @@
+/.venv/
+/target/
+/.mypy_cache/
+/.pytest_cache/
+/.ruff_cache/
+/artifacts/
+/scratch/
+/cluster/rendered/
+.DS_Store
+__pycache__/
+*.py[cod]
+*.so
+*.dylib

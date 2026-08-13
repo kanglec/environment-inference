@@ -1,0 +1,44 @@
+[package]
+name = "dcft-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Deterministic Monte Carlo and shared physics core for DCFT simulations"
+license = "MIT"
+
+[lib]
+name = "_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
+pyo3 = { version = "0.27.1", features = ["abi3-py311"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+incremental = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Public entry points are exposed through PyO3 and validate every error at the
+# boundary; repeating identical `# Errors` blocks on the small Rust API adds
+# noise. Owned vectors are likewise the intentional Python extraction ABI.
+missing_errors_doc = "allow"
+needless_pass_by_value = "allow"
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_arguments = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"

@@ -1,0 +1,60 @@
+schema_version = 1
+
+[campaign]
+name = "scaling"
+preset = "scaling"
+seed = 13503953896175478587
+output_root = "../artifacts/scaling"
+project_root = ".."
+scratch_root = "../scratch/scaling"
+
+[lattice]
+sizes = [16, 24, 32, 48, 64]
+lt_factor = 4
+regularization = "trotter"
+delta_tau = 0.125
+
+[protocols]
+noises = ["z", "zz"]
+p_values = [0.05, 0.1, 0.2, 0.3, 0.4]
+measurements = ["heterodyne", "homodyne", "local-x"]
+gaussian_fractions = [0.0, 0.125, 0.25, 0.5, 0.75, 1.0]
+
+[mc]
+enabled = true
+outer_records = 8192
+clean_thermalization_sweeps = 20000
+clean_saving_interval = 100
+posterior_decorrelation_gap = 500
+inner_measurements = 1024
+inner_saving_interval = 8
+updates = ["tnmc"]
+separations = [0, 1, 2, 4, 8, 12, 16, 24, 32]
+inner_budget_multipliers = [1, 2, 4]
+diagnostic_outer_records = 128
+replicated_chains = 4
+tnmc_bond_dimension = 16
+
+[ed]
+enabled = false
+max_sites = 0
+gaussian_outer_records = 0
+local_x_enumeration_limit = 14
+sampled_binary_records = 0
+priors = ["finite-transfer"]
+positivity_tolerance = 1e-11
+
+[statistics]
+bootstrap_resamples = 4000
+block_length = 32
+confidence = 0.95
+
+[cluster]
+scheduler = "slurm"
+partition = "day"
+account = "SET_BOUCHET_ACCOUNT"
+time_limit = "1-00:00:00"
+cpus_per_task = 1
+memory = "12G"
+python_module = "Python/3.12.3-GCCcore-13.3.0"
+rust_module = "Rust/1.96.1-GCCcore-13.3.0"

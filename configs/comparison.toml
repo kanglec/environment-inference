@@ -1,0 +1,60 @@
+schema_version = 1
+
+[campaign]
+name = "comparison"
+preset = "comparison"
+seed = 7640891576956012809
+output_root = "../artifacts/comparison"
+project_root = ".."
+scratch_root = "../scratch/comparison"
+
+[lattice]
+sizes = [4, 6, 8]
+lt_factor = 4
+regularization = "trotter"
+delta_tau = 0.25
+
+[protocols]
+noises = ["z", "zz"]
+p_values = [0.0, 0.1, 0.25, 0.4]
+measurements = ["heterodyne", "homodyne", "local-x"]
+gaussian_fractions = [0.25, 0.75]
+
+[mc]
+enabled = true
+outer_records = 512
+clean_thermalization_sweeps = 4000
+clean_saving_interval = 40
+posterior_decorrelation_gap = 80
+inner_measurements = 256
+inner_saving_interval = 4
+updates = ["metropolis", "sequential-metropolis", "metropolis-global", "corrected-wolff", "tnmc"]
+separations = "all"
+inner_budget_multipliers = [1, 2, 4]
+diagnostic_outer_records = 32
+replicated_chains = 4
+tnmc_bond_dimension = 16
+
+[ed]
+enabled = true
+max_sites = 8
+gaussian_outer_records = 4096
+local_x_enumeration_limit = 14
+sampled_binary_records = 16384
+priors = ["quantum", "finite-transfer", "transfer-ground"]
+positivity_tolerance = 1e-11
+
+[statistics]
+bootstrap_resamples = 2000
+block_length = 8
+confidence = 0.95
+
+[cluster]
+scheduler = "slurm"
+partition = "day"
+account = "SET_BOUCHET_ACCOUNT"
+time_limit = "1-00:00:00"
+cpus_per_task = 1
+memory = "8G"
+python_module = "Python/3.12.3-GCCcore-13.3.0"
+rust_module = "Rust/1.96.1-GCCcore-13.3.0"
