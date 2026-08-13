@@ -11,6 +11,9 @@ local reference material and are not part of source deployment; artifact
 source digests cover only maintained files inside this installable project.
 Bouchet deployments clone an exact public Git commit into durable project
 storage, while generated runtimes and task state remain in scratch.
+The controller is installed as a non-editable wheel so the checkout stays
+read-only; the environment stage makes its scratch copy writable only during
+the frozen build, then seals the prepared runtime read-only for all tasks.
 
 The implementation is **cluster-qualified** on Yale Bouchet. Qualification
 completed on 2026-08-13 with `dcft cluster doctor`, a frozen install from the

@@ -148,6 +148,7 @@ def test_cluster_render_is_static_and_versioned(smoke_config_path: Path, tmp_pat
     assert "uv sync --frozen --no-dev" in environment
     assert "cargo fetch --locked" in environment
     assert "flock 9" in environment
+    assert 'chmod -R u+w "$RUNTIME_PROJECT"' in environment
     assert 'chmod -R a-w "$RUNTIME_ROOT"' in environment
     dag = json.loads((rendered.root / "dag.json").read_text())
     compute = [task for task in dag["tasks"] if task["kind"] in {"clean", "mc", "exact"}]

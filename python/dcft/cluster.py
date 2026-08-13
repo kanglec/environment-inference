@@ -140,6 +140,7 @@ mkdir -p "$RUNTIME_PROJECT"
 rsync -a --delete \
   --exclude archive --exclude artifacts --exclude scratch --exclude target --exclude .venv \
   "$PROJECT_ROOT/" "$RUNTIME_PROJECT/"
+chmod -R u+w "$RUNTIME_PROJECT"
 cd "$RUNTIME_PROJECT"
 unset VIRTUAL_ENV CONDA_PREFIX PYO3_PYTHON
 export UV_PROJECT_ENVIRONMENT="$RUNTIME_ENV"
