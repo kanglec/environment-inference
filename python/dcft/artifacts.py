@@ -73,34 +73,27 @@ def canonical_json(value: Any) -> bytes:
 
 
 def source_digest(project_root: Path) -> str:
-    """Digest maintained source contained in the installable project."""
+    """Digest runtime-affecting source and locks, independent of campaign inputs."""
     root = project_root.resolve()
-    candidates: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root)
-        if any(
-            part
-            in {
-                ".git",
-                ".venv",
-                "archive",
-                "artifacts",
-                "scratch",
-                "target",
-                "__pycache__",
-                ".pytest_cache",
-                ".mypy_cache",
-                ".ruff_cache",
-            }
-            for part in relative.parts
-        ):
-            continue
-        if path.suffix in {".py", ".pyi", ".rs", ".toml", ".lock", ".md"} or path.name in {
+    candidates = [
+        root / name
+        for name in (
             ".python-version",
-        }:
-            candidates.append(path)
+            "Cargo.lock",
+            "Cargo.toml",
+            "pyproject.toml",
+            "rust-toolchain.toml",
+            "uv.lock",
+        )
+        if (root / name).is_file()
+    ]
+    for source_root, suffixes in ((root / "python", {".py", ".pyi"}), (root / "src", {".rs"})):
+        if source_root.is_dir():
+            candidates.extend(
+                path
+                for path in source_root.rglob("*")
+                if path.is_file() and path.suffix in suffixes
+            )
     digest = hashlib.sha256()
     for path in sorted(set(candidates), key=lambda item: str(item)):
         label = str(path.relative_to(root))

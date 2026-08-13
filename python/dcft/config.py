@@ -90,6 +90,7 @@ class ClusterSection:
     time_limit: str
     cpus_per_task: int
     memory: str
+    max_array_concurrency: int
     use_modules: bool
     python_module: str
     rust_module: str
@@ -243,6 +244,7 @@ def load_config(path: str | Path) -> CampaignConfig:
         time_limit=_required(cluster_raw, "time_limit", str),
         cpus_per_task=_required(cluster_raw, "cpus_per_task", int),
         memory=_required(cluster_raw, "memory", str),
+        max_array_concurrency=_required(cluster_raw, "max_array_concurrency", int),
         use_modules=_required(cluster_raw, "use_modules", bool)
         if "use_modules" in cluster_raw
         else True,
@@ -369,6 +371,8 @@ def validate_config(config: CampaignConfig) -> None:
         problems.append("statistics.confidence must lie in (0, 1)")
     if config.cluster.scheduler != "slurm":
         problems.append("only the slurm cluster scheduler is supported")
+    if config.cluster.cpus_per_task < 1 or config.cluster.max_array_concurrency < 1:
+        problems.append("cluster CPUs and max_array_concurrency must be positive")
     if config.cluster.partition != "day":
         problems.append("Bouchet development campaigns default to the day partition")
     if config.cluster.use_modules:
@@ -397,3 +401,16 @@ def as_serializable(config: CampaignConfig) -> dict[str, Any]:
         return value
 
     return cast(dict[str, Any], convert(config))
+
+
+def scientific_config(config: CampaignConfig) -> dict[str, Any]:
+    """Return the path- and scheduler-independent scientific request."""
+    payload = as_serializable(config)
+    campaign = cast(dict[str, Any], payload["campaign"])
+    payload["campaign"] = {
+        key: value
+        for key, value in campaign.items()
+        if key not in {"output_root", "project_root", "scratch_root"}
+    }
+    payload.pop("cluster")
+    return payload

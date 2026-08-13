@@ -14,6 +14,11 @@ storage, while generated runtimes and task state remain in scratch.
 The controller is installed as a non-editable wheel so the checkout stays
 read-only; the environment stage makes its scratch copy writable only during
 the frozen build, then seals the prepared runtime read-only for all tasks.
+Campaign inputs and Slurm resource choices have separate identities from the
+compiled runtime: changing a run configuration does not force a rebuild, and
+changing only storage paths or Slurm shape does not change the scientific plan
+digest. See `AGENT_SIMULATION_WORKFLOW.md` for the agent-facing operating
+procedure from a scientific request through verified plots and conclusions.
 
 The implementation is **cluster-qualified** on Yale Bouchet. Qualification
 completed on 2026-08-13 with `dcft cluster doctor`, a frozen install from the
@@ -106,6 +111,12 @@ sync`, Cargo, or a package install. Each task retains only lightweight scratch
 and cache directories. A durable-source digest check at task start prevents a
 submitted campaign from mixing a prepared runtime with subsequently edited
 source.
+
+Slurm arrays are capped by `[cluster].max_array_concurrency`. The cap is part
+of execution shape rather than scientific identity, so it can be lowered or
+raised to respect a user-specified aggregate resource limit without invalidating
+the campaign plan. The agent must still account for overlap between exact and
+MC/clean arrays and obtain consent before exceeding the Bouchet skill boundary.
 
 Every fixed-record chain starts from the saved **full** planted Euclidean
 configuration, which is an exact posterior draw. There is no ordinary

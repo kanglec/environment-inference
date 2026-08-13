@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .artifacts import canonical_json
-from .config import CampaignConfig, as_serializable
+from .config import CampaignConfig, scientific_config
 from .registries import resolve_measurements
 
 
@@ -101,9 +101,9 @@ def build_plan(config: CampaignConfig) -> Plan:
     analysis = _task("analysis", compute)
     validation = _task("validation", [*compute, analysis.task_id])
     tasks.extend((analysis, validation))
-    config_payload = as_serializable(config)
+    config_payload = scientific_config(config)
     digest = hashlib.sha256(canonical_json(config_payload)).hexdigest()
-    return Plan(1, config.campaign.name, digest, tuple(tasks))
+    return Plan(2, config.campaign.name, digest, tuple(tasks))
 
 
 def plan_path(config: CampaignConfig) -> Path:
@@ -144,7 +144,7 @@ def write_plan(config: CampaignConfig) -> Plan:
             )
     else:
         destination.write_bytes(canonical_json(_plan_dict(plan)))
-        (root / "config.snapshot.json").write_bytes(canonical_json(as_serializable(config)))
+        (root / "config.snapshot.json").write_bytes(canonical_json(scientific_config(config)))
     state = state_path(config)
     if not state.exists():
         initial = {
@@ -220,9 +220,7 @@ def update_task_state(
                 "artifacts": list(artifacts),
                 "error": error,
             }
-            temporary = destination.with_suffix(
-                f".tmp-{os.getpid()}-{threading.get_ident()}"
-            )
+            temporary = destination.with_suffix(f".tmp-{os.getpid()}-{threading.get_ident()}")
             with temporary.open("wb") as handle:
                 handle.write(canonical_json(state))
                 handle.flush()

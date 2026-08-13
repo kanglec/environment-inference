@@ -29,6 +29,16 @@ def test_presets_have_static_cluster_contract(project_root: Path) -> None:
         assert doctor(config)["checks"]["rust_module_matches_lock"]
         assert config.campaign.project_root != config.campaign.scratch_root
         assert config.mc.inner_budget_multipliers == (1, 2, 4)
+        assert config.cluster.max_array_concurrency > 0
+        plan = build_plan(config)
+        counts = {
+            kind: sum(task.kind == kind for task in plan.tasks) for kind in ("clean", "exact", "mc")
+        }
+        cap = config.cluster.max_array_concurrency
+        peak_array_tasks = min(counts["exact"], cap) + max(
+            min(counts["clean"], cap), min(counts["mc"], cap)
+        )
+        assert peak_array_tasks * config.cluster.cpus_per_task <= 256
 
 
 def test_project_and_scratch_separation_is_enforced(
@@ -66,6 +76,7 @@ def test_project_and_scratch_separation_is_enforced(
             "at least two outer records",
         ),
         ("tnmc_bond_dimension = 8", "tnmc_bond_dimension = 0", "positive"),
+        ("max_array_concurrency = 8", "max_array_concurrency = 0", "positive"),
     ],
 )
 def test_strict_configuration_rejects_ambiguous_campaigns(
@@ -101,6 +112,34 @@ def test_plan_dag_and_resumability(smoke_config_path: Path) -> None:
     # Planning again preserves resumable state.
     write_plan(config)
     assert read_state(config)["tasks"][clean.task_id]["status"] == "complete"
+    snapshot = json.loads((config.campaign.output_root / "config.snapshot.json").read_text())
+    assert "cluster" not in snapshot
+    assert "project_root" not in snapshot["campaign"]
+
+
+def test_scientific_plan_identity_ignores_paths_and_slurm_shape(
+    smoke_config_path: Path, tmp_path: Path
+) -> None:
+    baseline = load_config(smoke_config_path)
+    changed_path = tmp_path / "operational-shape.toml"
+    changed_path.write_text(
+        smoke_config_path.read_text()
+        .replace('output_root = "', 'output_root = "alternate-')
+        .replace('scratch_root = "', 'scratch_root = "alternate-')
+        .replace("cpus_per_task = 1", "cpus_per_task = 2")
+        .replace("max_array_concurrency = 8", "max_array_concurrency = 3")
+    )
+    changed = load_config(changed_path)
+
+    assert build_plan(changed).config_digest == build_plan(baseline).config_digest
+    assert build_plan(changed).tasks == build_plan(baseline).tasks
+
+    scientific_path = tmp_path / "scientific-change.toml"
+    scientific_path.write_text(
+        smoke_config_path.read_text().replace("p_values = [0.1]", "p_values = [0.2]")
+    )
+    scientific = load_config(scientific_path)
+    assert build_plan(scientific).config_digest != build_plan(baseline).config_digest
 
 
 def test_parallel_state_updates_do_not_lose_sibling_completions(
@@ -136,8 +175,9 @@ def test_cluster_render_is_static_and_versioned(smoke_config_path: Path, tmp_pat
     rendered = render_cluster(config, tmp_path / "cluster")
     script = rendered.script.read_text()
     assert "#SBATCH --partition=day" in script
-    assert config.cluster.python_module in script
-    assert config.cluster.rust_module in script
+    assert f"%{config.cluster.max_array_concurrency}" in script
+    assert "module load" not in script
+    assert "${HOME}/.local/bin:${HOME}/.cargo/bin" in script
     assert "uv sync" not in script
     assert "cargo fetch" not in script
     assert "rsync" not in script
@@ -158,6 +198,7 @@ def test_cluster_render_is_static_and_versioned(smoke_config_path: Path, tmp_pat
     assert dag["stage_dependencies"]["mc"] == ["environment", "clean"]
     assert dag["stage_dependencies"]["analysis"] == ["environment", "mc", "exact"]
     assert dag["source_digest"] in dag["runtime_root"]
+    assert dag["execution"]["cluster"]["max_array_concurrency"] == 8
     assert set(rendered.stage_scripts) == {
         "environment",
         "clean",
@@ -189,8 +230,11 @@ def test_submission_prepares_one_environment_before_all_tasks(
         *,
         indices: list[int] | None = None,
         dependencies: list[str] | None = None,
+        max_concurrency: int | None = None,
     ) -> str:
         stage = script.stem
+        if indices is not None:
+            assert max_concurrency == config.cluster.max_array_concurrency
         submissions.append((stage, indices, dependencies or []))
         return f"job-{stage}"
 
@@ -199,6 +243,7 @@ def test_submission_prepares_one_environment_before_all_tasks(
 
     by_stage = {stage: dependencies for stage, _indices, dependencies in submissions}
     assert next(iter(result["jobs"])) == "environment"
+    assert result["resource_shape"]["max_array_concurrency"] == 8
     assert by_stage["environment"] == []
     assert by_stage["clean"] == ["job-environment"]
     assert by_stage["exact"] == ["job-environment"]
@@ -212,14 +257,34 @@ def test_submission_prepares_one_environment_before_all_tasks(
     assert by_stage["validation"] == ["job-environment", "job-analysis"]
 
 
+def test_subset_submission_retains_array_concurrency_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    submitted: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        submitted.extend(command)
+
+        class Result:
+            stdout = "12345\n"
+
+        return Result()
+
+    monkeypatch.setattr(cluster_module.subprocess, "run", fake_run)
+    script = tmp_path / "mc.sbatch"
+    script.write_text("#!/usr/bin/env bash\n")
+    job_id = cluster_module._submit_script(script, indices=[0, 3, 7], max_concurrency=5)
+
+    assert job_id == "12345"
+    assert "--array=0,3,7%5" in submitted
+
+
 def test_cluster_render_supports_user_installed_toolchains(
     smoke_config_path: Path, tmp_path: Path
 ) -> None:
     config_path = tmp_path / "direct-tools.toml"
     config_path.write_text(
-        smoke_config_path.read_text().replace(
-            'memory = "2G"', 'memory = "5120"\nuse_modules = false'
-        )
+        smoke_config_path.read_text().replace('memory = "2G"', 'memory = "5120"')
     )
     config = load_config(config_path)
 
@@ -246,5 +311,6 @@ def test_bouchet_smoke_uses_skill_resource_defaults(project_root: Path) -> None:
     assert config.cluster.time_limit == "01:00:00"
     assert config.cluster.cpus_per_task == 1
     assert config.cluster.memory == "5120"
+    assert config.cluster.max_array_concurrency == 8
     assert not config.cluster.use_modules
     assert config.mc.updates == ("tnmc",)

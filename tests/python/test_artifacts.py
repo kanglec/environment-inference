@@ -18,16 +18,24 @@ from dcft.artifacts import (
 
 def test_source_digest_is_self_contained(tmp_path: Path) -> None:
     checkout = tmp_path / "checkout"
-    checkout.mkdir()
-    (checkout / "model.py").write_text("VALUE = 1\n")
+    package = checkout / "python" / "dcft"
+    package.mkdir(parents=True)
+    source = package / "model.py"
+    source.write_text("VALUE = 1\n")
     sibling_notes = tmp_path / "notes"
     sibling_notes.mkdir()
     (sibling_notes / "main.tex").write_text("not part of the simulation repository")
 
     digest = source_digest(checkout)
     (sibling_notes / "main.tex").write_text("changed external notes")
+    (checkout / "README.md").write_text("documentation")
+    configs = checkout / "configs"
+    configs.mkdir()
+    (configs / "request.toml").write_text("outer_records = 10\n")
 
     assert source_digest(checkout) == digest
+    source.write_text("VALUE = 2\n")
+    assert source_digest(checkout) != digest
 
 
 def test_partitioned_parquet_round_trip_is_content_addressed(

@@ -52,9 +52,11 @@ confidence = 0.95
 [cluster]
 scheduler = "slurm"
 partition = "day"
-account = "SET_BOUCHET_ACCOUNT"
+account = "pi_mc2832"
 time_limit = "1-00:00:00"
 cpus_per_task = 1
 memory = "8G"
+max_array_concurrency = 64
+use_modules = false
 python_module = "Python/3.12.3-GCCcore-13.3.0"
 rust_module = "Rust/1.96.1-GCCcore-13.3.0"
