@@ -7,8 +7,9 @@ disorder, protocol, implementation, or target hardware changes materially.
 
 Available guidance:
 
+- [Plain random-site Metropolis](metropolis.md)
 - [TNMC](tnmc.md)
 
-Add future methods as sibling documents, for example `metropolis.md` or
-`corrected-wolff.md`, and link them from this index and
+Add future methods as sibling documents, for example `sequential-metropolis.md`
+or `corrected-wolff.md`, and link them from this index and
 `AGENT_SIMULATION_WORKFLOW.md`.

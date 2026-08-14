@@ -18,7 +18,8 @@ rsync where needed. Do not add wrappers around short, clear operations.
 - Simulation contract:
   `../notes/archive/all-to-all-approximation/section/simulation.tex`.
 - Evidence-based update parameter guidance:
-  `docs/update-methods/` (currently `docs/update-methods/tnmc.md`).
+  `docs/update-methods/` (currently `docs/update-methods/metropolis.md` and
+  `docs/update-methods/tnmc.md`).
 - Maintained implementation: this repository outside `archive/`.
 - Historic implementation: `archive/`, read-only reference for ideas and
   checks, never a production pipeline.
