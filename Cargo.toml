@@ -17,6 +17,7 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
 pyo3 = { version = "0.27.1", features = ["abi3-py311"] }
+rayon = "1.12.0"
 
 [profile.release]
 opt-level = 3

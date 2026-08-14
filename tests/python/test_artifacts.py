@@ -78,7 +78,7 @@ def test_partitioned_parquet_round_trip_is_content_addressed(
     manifest = load_artifact(first.path).manifest
     assert manifest["rng_contract"]["stream_key_version"] == "dcft-stream-v1"
     assert manifest["parents"] == []
-    assert manifest["qualification"] == "cluster-qualified"
+    assert len(manifest["source_digest"]) == 64
 
 
 def test_archived_formats_have_no_compatibility_reader(tmp_path: Path) -> None:

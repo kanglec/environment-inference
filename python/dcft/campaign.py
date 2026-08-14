@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import pyarrow as pa
 
 from . import _core
 from .artifacts import (
@@ -41,9 +42,7 @@ class CampaignError(RuntimeError):
 
 
 def _couplings(config: CampaignConfig) -> tuple[float, float]:
-    return _core.lattice_couplings(
-        config.lattice.regularization, config.lattice.delta_tau
-    )
+    return _core.lattice_couplings(config.lattice.regularization, config.lattice.delta_tau)
 
 
 def _artifact_by_id(root: Path, artifact_id: str) -> Artifact:
@@ -127,7 +126,7 @@ def _diagnostic_schedule(config: CampaignConfig, global_id: int) -> tuple[tuple[
     )
 
 
-def _execute_mc(config: CampaignConfig, task: Task) -> tuple[str, ...]:
+def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[str, ...]:
     dependency = _task_state(config, task.dependencies[0])
     parent_ids = tuple(str(value) for value in dependency["artifacts"])
     if dependency["status"] != "complete" or len(parent_ids) != 1:
@@ -150,12 +149,14 @@ def _execute_mc(config: CampaignConfig, task: Task) -> tuple[str, ...]:
     parameters = _core.protocol_parameters(measurement, p, gamma)
     kx, kt = _couplings(config)
     separations = config.separations_for(lx)
-    rows: list[dict[str, object]] = []
+    prepared: list[dict[str, Any]] = []
 
     for clean_row in clean.to_pylist():
         global_id = int(clean_row["global_id"])
-        if not int(task.parameters["global_id_start"]) <= global_id < int(
-            task.parameters["global_id_stop"]
+        if (
+            not int(task.parameters["global_id_start"])
+            <= global_id
+            < int(task.parameters["global_id_stop"])
         ):
             continue
         packed = bytes(clean_row["configuration"])
@@ -173,143 +174,154 @@ def _execute_mc(config: CampaignConfig, task: Task) -> tuple[str, ...]:
             gamma,
         )
         planted_variables = [int(value) for value in generated["variables"]]
+        planted_bond = [boundary[x] * boundary[(x + 1) % lx] for x in range(lx)]
         for multiplier, replica in _diagnostic_schedule(config, global_id):
             measurements = config.mc.inner_measurements * multiplier
             stream_label = (
                 f"{noise}/{protocol_id}/p={p:.17g}/{update}/chi={tnmc_bond_dimension}/"
                 f"budget={multiplier}/replica={replica}"
             )
-            result = _core.posterior_observables(
-                lx,
-                lt,
-                kx,
-                kt,
-                noise,
-                generated["record_couplings"],
-                list(packed),
-                update,
-                config.campaign.seed,
-                global_id,
-                stream_label,
-                config.mc.posterior_decorrelation_gap,
-                measurements,
-                config.mc.inner_saving_interval,
-                list(separations),
-                global_id < config.mc.diagnostic_outer_records,
-                tnmc_bond_dimension,
-            )
-            spin_profile = [float(value) for value in result["spin_profile"]]
-            bond_profile = [float(value) for value in result["bond_profile"]]
-            planted_spin = boundary
-            planted_bond = [
-                boundary[x] * boundary[(x + 1) % lx]
-                for x in range(lx)
-            ]
-            spin_overlap = float(np.mean(np.asarray(planted_spin) * np.asarray(spin_profile)))
-            bond_overlap = float(np.mean(np.asarray(planted_bond) * np.asarray(bond_profile)))
-            planted_spin_correlator = [
-                float(
-                    np.mean(
-                        np.asarray(planted_spin)
-                        * np.roll(np.asarray(spin_profile), -separation)
-                    )
-                )
-                for separation in separations
-            ]
-            planted_bond_correlator = [
-                float(
-                    np.mean(
-                        np.asarray(planted_bond)
-                        * np.roll(np.asarray(bond_profile), -separation)
-                    )
-                )
-                for separation in separations
-            ]
-            rows.append(
+            prepared.append(
                 {
                     "global_id": global_id,
-                    "lx": lx,
-                    "lt": lt,
-                    "noise": noise,
-                    "measurement": measurement,
-                    "protocol_id": protocol_id,
-                    "update": update,
-                    "tnmc_bond_dimension": tnmc_bond_dimension,
-                    "p": p,
-                    "lambda": float(parameters["lambda"]),
-                    "gamma": parameters["gamma"],
-                    "kappa": parameters["kappa"],
-                    "protocol_coupling": parameters["coupling"],
-                    "planted_configuration_hash": expected_hash,
+                    "packed": list(packed),
+                    "expected_hash": expected_hash,
+                    "boundary": boundary,
+                    "planted_bond": planted_bond,
+                    "generated": generated,
                     "planted_variables": planted_variables,
-                    "raw_record": [float(value) for value in generated["raw_record"]],
-                    "record_couplings": [
-                        float(value) for value in generated["record_couplings"]
-                    ],
-                    "standard_variates": [
-                        float(value) for value in generated["standard_variates"]
-                    ],
-                    "inner_budget_multiplier": multiplier,
+                    "multiplier": multiplier,
                     "replica": replica,
-                    "posterior_decorrelation_gap": config.mc.posterior_decorrelation_gap,
-                    "inner_measurements": measurements,
-                    "inner_saving_interval": config.mc.inner_saving_interval,
-                    "energy": float(result["energy"]),
-                    "magnetization": float(result["magnetization"]),
-                    "boundary_magnetization": float(result["boundary_magnetization"]),
-                    "spin_profile": spin_profile,
-                    "bond_profile": bond_profile,
-                    "separations": list(separations),
-                    "spin_correlator_profile": [
-                        [float(value) for value in profile]
-                        for profile in result["spin_correlator_profile"]
-                    ],
-                    "bond_correlator_profile": [
-                        [float(value) for value in profile]
-                        for profile in result["bond_correlator_profile"]
-                    ],
-                    "planted_spin_overlap": spin_overlap,
-                    "planted_bond_overlap": bond_overlap,
-                    "planted_spin_correlator": planted_spin_correlator,
-                    "planted_bond_correlator": planted_bond_correlator,
-                    "energy_trace": [float(value) for value in result["energy_trace"]],
-                    "magnetization_trace": [
-                        float(value) for value in result["magnetization_trace"]
-                    ],
-                    "boundary_magnetization_trace": [
-                        float(value) for value in result["boundary_magnetization_trace"]
-                    ],
-                    "planted_spin_overlap_trace": [
-                        float(value) for value in result["planted_spin_overlap_trace"]
-                    ],
-                    "planted_bond_overlap_trace": [
-                        float(value) for value in result["planted_bond_overlap_trace"]
-                    ],
-                    "sweeps": int(result["sweeps"]),
-                    "local_proposed": int(result["local_proposed"]),
-                    "local_accepted": int(result["local_accepted"]),
-                    "cluster_proposed": int(result["cluster_proposed"]),
-                    "cluster_accepted": int(result["cluster_accepted"]),
-                    "cluster_sites_proposed": int(result["cluster_sites_proposed"]),
-                    "global_proposed": int(result["global_proposed"]),
-                    "global_attempted": int(result["global_attempted"]),
-                    "global_accepted": int(result["global_accepted"]),
-                    "tnmc_proposed": int(result["tnmc_proposed"]),
-                    "tnmc_accepted": int(result["tnmc_accepted"]),
-                    "tnmc_sites_proposed": int(result["tnmc_sites_proposed"]),
-                    "tnmc_conditionals_regularized": int(
-                        result["tnmc_conditionals_regularized"]
-                    ),
+                    "measurements": measurements,
+                    "stream_label": stream_label,
+                    "retain_trace": global_id < config.mc.diagnostic_outer_records,
                 }
             )
-    if not rows:
+    if not prepared:
         raise CampaignError(f"MC task {task.task_id} selected no clean configurations")
+
+    results = _core.posterior_observables_batch(
+        lx,
+        lt,
+        kx,
+        kt,
+        noise,
+        [list(item["generated"]["record_couplings"]) for item in prepared],
+        [cast(list[int], item["packed"]) for item in prepared],
+        update,
+        config.campaign.seed,
+        [int(item["global_id"]) for item in prepared],
+        [str(item["stream_label"]) for item in prepared],
+        config.mc.posterior_decorrelation_gap,
+        [int(item["measurements"]) for item in prepared],
+        config.mc.inner_saving_interval,
+        list(separations),
+        [bool(item["retain_trace"]) for item in prepared],
+        tnmc_bond_dimension,
+        workers,
+    )
+    rows: list[dict[str, object]] = []
+    for item, result in zip(prepared, results, strict=True):
+        global_id = int(item["global_id"])
+        generated = cast(dict[str, Any], item["generated"])
+        boundary = cast(list[int], item["boundary"])
+        planted_bond = cast(list[int], item["planted_bond"])
+        spin_profile = [float(value) for value in result["spin_profile"]]
+        bond_profile = [float(value) for value in result["bond_profile"]]
+        spin_overlap = float(np.mean(np.asarray(boundary) * np.asarray(spin_profile)))
+        bond_overlap = float(np.mean(np.asarray(planted_bond) * np.asarray(bond_profile)))
+        planted_spin_correlator = [
+            float(np.mean(np.asarray(boundary) * np.roll(np.asarray(spin_profile), -separation)))
+            for separation in separations
+        ]
+        planted_bond_correlator = [
+            float(
+                np.mean(np.asarray(planted_bond) * np.roll(np.asarray(bond_profile), -separation))
+            )
+            for separation in separations
+        ]
+        rows.append(
+            {
+                "global_id": global_id,
+                "lx": lx,
+                "lt": lt,
+                "noise": noise,
+                "measurement": measurement,
+                "protocol_id": protocol_id,
+                "update": update,
+                "tnmc_bond_dimension": tnmc_bond_dimension,
+                "p": p,
+                "lambda": float(parameters["lambda"]),
+                "gamma": parameters["gamma"],
+                "kappa": parameters["kappa"],
+                "protocol_coupling": parameters["coupling"],
+                "planted_configuration_hash": str(item["expected_hash"]),
+                "planted_variables": cast(list[int], item["planted_variables"]),
+                "raw_record": [float(value) for value in generated["raw_record"]],
+                "record_couplings": [float(value) for value in generated["record_couplings"]],
+                "standard_variates": [float(value) for value in generated["standard_variates"]],
+                "inner_budget_multiplier": int(item["multiplier"]),
+                "replica": int(item["replica"]),
+                "posterior_decorrelation_gap": config.mc.posterior_decorrelation_gap,
+                "inner_measurements": int(item["measurements"]),
+                "inner_saving_interval": config.mc.inner_saving_interval,
+                "energy": float(result["energy"]),
+                "magnetization": float(result["magnetization"]),
+                "boundary_magnetization": float(result["boundary_magnetization"]),
+                "spin_profile": spin_profile,
+                "bond_profile": bond_profile,
+                "separations": list(separations),
+                "spin_correlator_profile": [
+                    [float(value) for value in profile]
+                    for profile in result["spin_correlator_profile"]
+                ],
+                "bond_correlator_profile": [
+                    [float(value) for value in profile]
+                    for profile in result["bond_correlator_profile"]
+                ],
+                "planted_spin_overlap": spin_overlap,
+                "planted_bond_overlap": bond_overlap,
+                "planted_spin_correlator": planted_spin_correlator,
+                "planted_bond_correlator": planted_bond_correlator,
+                "energy_trace": [float(value) for value in result["energy_trace"]],
+                "magnetization_trace": [float(value) for value in result["magnetization_trace"]],
+                "boundary_magnetization_trace": [
+                    float(value) for value in result["boundary_magnetization_trace"]
+                ],
+                "planted_spin_overlap_trace": [
+                    float(value) for value in result["planted_spin_overlap_trace"]
+                ],
+                "planted_bond_overlap_trace": [
+                    float(value) for value in result["planted_bond_overlap_trace"]
+                ],
+                "sweeps": int(result["sweeps"]),
+                "local_proposed": int(result["local_proposed"]),
+                "local_accepted": int(result["local_accepted"]),
+                "cluster_proposed": int(result["cluster_proposed"]),
+                "cluster_accepted": int(result["cluster_accepted"]),
+                "cluster_sites_proposed": int(result["cluster_sites_proposed"]),
+                "global_proposed": int(result["global_proposed"]),
+                "global_attempted": int(result["global_attempted"]),
+                "global_accepted": int(result["global_accepted"]),
+                "tnmc_proposed": int(result["tnmc_proposed"]),
+                "tnmc_accepted": int(result["tnmc_accepted"]),
+                "tnmc_sites_proposed": int(result["tnmc_sites_proposed"]),
+                "tnmc_conditionals_regularized": int(result["tnmc_conditionals_regularized"]),
+            }
+        )
     artifact = write_artifact(
         config.campaign.output_root,
-        "mc-records",
+        "mc-chunk",
         table_from_rows("mc-records", rows),
         metadata={
             "task_id": task.task_id,
+            "chunk_id": task.parameters["chunk_id"],
+            "chunk_count": task.parameters["chunk_count"],
+            "global_id_range": [
+                task.parameters["global_id_start"],
+                task.parameters["global_id_stop"],
+            ],
+            "workers": workers,
             "parent_clean_artifact": clean_artifact.artifact_id,
             "lattice": {"lx": lx, "lt": lt, "kx": kx, "kt": kt},
             "noise": noise,
@@ -335,6 +347,66 @@ def _execute_mc(config: CampaignConfig, task: Task) -> tuple[str, ...]:
         },
         project_root=config.campaign.project_root,
         parents=(clean_artifact.artifact_id,),
+        partition_by=("noise", "measurement", "update"),
+    )
+    return (artifact.artifact_id,)
+
+
+def _execute_merge(config: CampaignConfig, task: Task) -> tuple[str, ...]:
+    artifacts: list[Artifact] = []
+    for dependency_id in task.dependencies:
+        dependency = _task_state(config, dependency_id)
+        artifact_ids = tuple(str(value) for value in dependency["artifacts"])
+        if dependency["status"] != "complete" or len(artifact_ids) != 1:
+            raise CampaignError(f"MC chunk dependency {dependency_id} is incomplete")
+        artifact = _artifact_by_id(config.campaign.output_root, artifact_ids[0])
+        if artifact.manifest["kind"] != "mc-chunk":
+            raise CampaignError(f"merge dependency {dependency_id} is not an MC chunk")
+        artifacts.append(artifact)
+    if len(artifacts) != int(task.parameters["chunk_count"]):
+        raise CampaignError("merge received the wrong number of MC chunks")
+    table = pa.concat_tables([read_table(artifact) for artifact in artifacts])
+    table = table.sort_by(
+        [
+            ("global_id", "ascending"),
+            ("inner_budget_multiplier", "ascending"),
+            ("replica", "ascending"),
+        ]
+    )
+    production_ids = [
+        int(row["global_id"])
+        for row in table.to_pylist()
+        if int(row["inner_budget_multiplier"]) == 1 and int(row["replica"]) == 0
+    ]
+    expected_ids = list(
+        range(
+            int(task.parameters["global_id_start"]),
+            int(task.parameters["global_id_stop"]),
+        )
+    )
+    if production_ids != expected_ids:
+        raise CampaignError("MC chunks are overlapping, incomplete, or out of order")
+    artifact = write_artifact(
+        config.campaign.output_root,
+        "mc-records",
+        table,
+        metadata={
+            "task_id": task.task_id,
+            "merged_chunks": len(artifacts),
+            "global_id_range": [
+                task.parameters["global_id_start"],
+                task.parameters["global_id_stop"],
+            ],
+            "lattice": {"lx": task.parameters["lx"], "lt": task.parameters["lt"]},
+            "noise": task.parameters["noise"],
+            "measurement": task.parameters["measurement"],
+            "protocol_id": task.parameters["protocol_id"],
+            "p": task.parameters["p"],
+            "update": task.parameters["update"],
+            "tnmc_bond_dimension": task.parameters["tnmc_bond_dimension"],
+        },
+        project_root=config.campaign.project_root,
+        parents=tuple(artifact.artifact_id for artifact in artifacts),
         partition_by=("noise", "measurement", "update"),
     )
     return (artifact.artifact_id,)
@@ -455,9 +527,13 @@ def run_campaign(
     *,
     executor: str = "local",
     task_ids: Iterable[str] | None = None,
+    workers: int | None = None,
 ) -> dict[str, int]:
     if executor != "local":
         raise CampaignError("development execution supports only --executor local")
+    effective_workers = config.execution.local_workers if workers is None else workers
+    if effective_workers < 1:
+        raise CampaignError("workers must be positive")
     verify_rust_registries()
     plan = write_plan(config)
     selected = set(task_ids) if task_ids is not None else None
@@ -491,9 +567,9 @@ def run_campaign(
             stale_dependencies = [
                 artifact_id
                 for artifact_id in dependency["artifacts"]
-                if _artifact_by_id(
-                    config.campaign.output_root, str(artifact_id)
-                ).manifest["source_digest"]
+                if _artifact_by_id(config.campaign.output_root, str(artifact_id)).manifest[
+                    "source_digest"
+                ]
                 != current_source_digest
             ]
             if stale_dependencies:
@@ -506,7 +582,9 @@ def run_campaign(
             if task.kind == "clean":
                 artifacts = _execute_clean(config, task)
             elif task.kind == "mc":
-                artifacts = _execute_mc(config, task)
+                artifacts = _execute_mc(config, task, workers=effective_workers)
+            elif task.kind == "merge":
+                artifacts = _execute_merge(config, task)
             elif task.kind == "exact":
                 artifacts = _execute_exact(config, task)
             else:
@@ -516,7 +594,7 @@ def run_campaign(
             raise
         update_task_state(config, task.task_id, "complete", artifacts=artifacts)
         completed += 1
-    return {"completed": completed, "skipped": skipped}
+    return {"completed": completed, "skipped": skipped, "workers": effective_workers}
 
 
 def campaign_artifacts(config: CampaignConfig) -> list[Artifact]:

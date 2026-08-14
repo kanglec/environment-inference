@@ -1,35 +1,20 @@
-# Unified DCFT simulation
+# DCFT simulation
 
-This directory is the maintained numerical implementation for
-`notes/main.tex` and `notes/simulation.tex`. It is one maturin project, one
-locked `uv` environment, one Rust library (`dcft._core`), and one `dcft` CLI.
-Everything under `archive/` is reference-only; new artifacts intentionally
-have no archive-format compatibility reader.
+This directory is the maintained simulation program for the decohered critical
+Ising inference problem. The numerical contract is
+`../notes/archive/all-to-all-approximation/section/simulation.tex`; the TNMC
+reference is `../local/tensor-network-monte-carlo/arXiv-2409.06538v2/main.tex`.
+Code under `archive/` is reference-only.
 
-The Git repository is rooted at this directory. The numerical notes remain
-local reference material and are not part of source deployment; artifact
-source digests cover only maintained files inside this installable project.
-Bouchet deployments clone an exact public Git commit into durable project
-storage, while generated runtimes and task state remain in scratch.
-The controller is installed as a non-editable wheel so the checkout stays
-read-only; the environment stage makes its scratch copy writable only during
-the frozen build, then seals the prepared runtime read-only for all tasks.
-Campaign inputs and Slurm resource choices have separate identities from the
-compiled runtime: changing a run configuration does not force a rebuild, and
-changing only storage paths or Slurm shape does not change the scientific plan
-digest. See `AGENT_SIMULATION_WORKFLOW.md` for the agent-facing operating
-procedure from a scientific request through verified plots and conclusions.
+The program is one Rust/Python package and one `dcft` command. Local and Slurm
+execution use the same planner and kernels. A cluster run uses the configured
+checkout and its `.venv` directly: it does not copy source, create a runtime per
+campaign, load modules, or make anything read-only.
 
-The implementation is **cluster-qualified** on Yale Bouchet. Qualification
-completed on 2026-08-13 with `dcft cluster doctor`, a frozen install from the
-committed locks, Linux Rust tests, and the CPU-only `day` smoke campaign in
-`configs/bouchet-smoke.toml`. The qualification root job was `22146897`; see
-`BOUCHET_QUALIFICATION.md` for the reproducible evidence record.
-
-## Install and verify
+## Install and test
 
 ```bash
-uv sync --frozen --all-extras
+uv sync --frozen
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
@@ -38,129 +23,169 @@ uv run mypy python/dcft
 uv run pytest
 ```
 
-`rust-toolchain.toml`, `Cargo.lock`, `.python-version`, and `uv.lock` define
-the development toolchain (Rust 1.96.1 and Python 3.12). Same-toolchain/platform runs are byte-reproducible
-after canonical row sorting; other architectures are required to pass the
-numerical and statistical equivalence tests instead.
+`rust-toolchain.toml`, `.python-version`, `Cargo.lock`, and `uv.lock` pin the
+development environment. After editing Rust code, `uv sync` or `maturin
+develop --release` rebuilds the extension.
 
-The bounded scientific acceptance sequence is:
-
-```bash
-dcft campaign plan --config configs/acceptance.toml
-dcft campaign run --executor local --config configs/acceptance.toml
-dcft campaign analyze --config configs/acceptance.toml
-dcft campaign validate --config configs/acceptance.toml
-dcft campaign run --executor local --config configs/mc-only-smoke.toml
-dcft campaign analyze --config configs/mc-only-smoke.toml
-```
-
-The final two commands are the MC-only beyond-ED smoke path. Its deliberately
-small record count is not a promotion-grade statistical validation campaign.
-
-## Commands
+## Common commands
 
 ```text
-dcft campaign plan [--config CONFIG]
-dcft campaign run --executor local [--config CONFIG]
-dcft campaign validate [--config CONFIG]
-dcft campaign analyze [--config CONFIG]
-dcft cluster render [--config CONFIG]
-dcft cluster doctor [--config CONFIG]
-dcft cluster submit [--config CONFIG]
+dcft campaign plan     --config CONFIG
+dcft campaign run      --config CONFIG [--workers N] [--task-id ID]
+dcft campaign analyze  --config CONFIG
+dcft campaign validate --config CONFIG
+
+dcft benchmark updates --config CONFIG [benchmark options]
+
+dcft cluster doctor --config CONFIG
+dcft cluster render --config CONFIG
+dcft cluster submit --config CONFIG
 dcft cluster status JOB_ID
-dcft cluster resume [--config CONFIG]
+dcft cluster resume --config CONFIG
+
 dcft inspect PATH
 ```
 
-The maintained presets are `configs/comparison.toml` and
-`configs/scaling.toml`; `configs/local-smoke.toml` is a fast development
-campaign, `configs/acceptance.toml` is the bounded `L=4,6,8` local acceptance
-matrix, and `configs/mc-only-smoke.toml` exercises `L=10` beyond its configured
-ED limit. `comparison` uses `L=4,6,8`, all requested protocols/noises and all
-three ED priors, and includes TNMC alongside the earlier update kernels.
-`scaling` is MC-only at large sizes, uses TNMC, and has a configurable
-separation grid and an explicit Gaussian grid for I--MMSE integration.
+For a complete local smoke run:
 
-## Numerical architecture
+```bash
+dcft campaign plan --config configs/local-smoke.toml
+dcft campaign run --config configs/local-smoke.toml
+dcft campaign analyze --config configs/local-smoke.toml
+dcft campaign validate --config configs/local-smoke.toml
+```
 
-The Rust library contains:
+`campaign run` defaults to `[execution].local_workers`; `--workers` overrides
+it. Random streams depend on the scientific key and global outer ID, never on
+the worker, chunk, process, or Slurm task, so changing parallel shape does not
+change the results.
 
-- `physics`: Trotter/isotropic couplings, Z/ZZ variables, the heterodyne,
-  homodyne, arbitrary `gaussian(gamma)`, and local-X protocols, record
-  generation, and observable eigenvalues;
-- `rng`: xoshiro256++ with SplitMix64 expansion and the versioned
-  `dcft-stream-v1` key contract;
-- `mc`: periodic lattices, clean Wolff generation, random/sequential/lazy
-  global Metropolis, corrected Wolff, and periodic TNMC. TNMC freezes a random
-  row and column, contracts the remaining open rectangle with a truncated
-  boundary MPS, and applies the exact Hastings correction;
-- `observables`: scalar, boundary-profile, and configured-separation
-  accumulators.
+## Parallel execution
 
-Python provides dense TFIM ED, finite-transfer and transfer-ground priors,
-generic Z/ZZ density matrices, exact posterior sums, Parquet artifacts,
-Geyer autocorrelations, moving-block resampling, I--MMSE integration,
-campaign execution, plotting, validation, and Slurm rendering.
+The clean stage is one ordered Wolff chain per lattice size. Every fixed-record
+parameter point is divided into `[execution].mc_chunks` balanced global-ID
+ranges. A local or Slurm task handles one range, and a Rayon pool processes the
+independent posterior chains in that range using:
 
-For Slurm campaigns, an explicit `environment` stage prepares exactly one
-campaign-shared runtime under scratch, keyed by the full source digest. It
-installs from `uv.lock` and `Cargo.lock`, verifies the shared Rust registry,
-and then makes the runtime read-only. Compute, analysis, and validation jobs
-depend on that stage and execute its `dcft` directly: they never run `uv
-sync`, Cargo, or a package install. Each task retains only lightweight scratch
-and cache directories. A durable-source digest check at task start prevents a
-submitted campaign from mixing a prepared runtime with subsequently edited
-source.
+- `[execution].local_workers` for ordinary local runs;
+- `--workers N` when supplied explicitly;
+- `[cluster].cpus_per_task` in generated Slurm scripts.
 
-Slurm arrays are capped by `[cluster].max_array_concurrency`. The cap is part
-of execution shape rather than scientific identity, so it can be lowered or
-raised to respect a user-specified aggregate resource limit without invalidating
-the campaign plan. The agent must still account for overlap between exact and
-MC/clean arrays and obtain consent before exceeding the Bouchet skill boundary.
+Each chunk writes an `mc-chunk` artifact. A deterministic merge task checks
+that production global IDs are complete, non-overlapping, and ordered before
+writing the `mc-records` artifact consumed by analysis.
 
-Every fixed-record chain starts from the saved **full** planted Euclidean
-configuration, which is an exact posterior draw. There is no ordinary
-production burn-in. A positive measured decorrelation gap is still mandatory
-before planted-replica estimators are retained. Gaussian strengths share the
-same planted state and normal vector; local-X uses a separately labeled
-stream. Random keys never depend on thread, chunk, process, or Slurm order.
+```mermaid
+flowchart LR
+    C["clean Wolff chain"] --> M["MC chunk array"]
+    M --> G["verified merge per parameter point"]
+    E["exact tasks (when enabled)"] --> A["analysis"]
+    C --> A
+    G --> A
+    A --> V["validation"]
+```
 
-The TNMC cutoff is the positive `[mc].tnmc_bond_dimension` value. One TNMC
-sweep is one random-cut block proposal, including a rejection. Artifacts store
-the block acceptance counts, proposed active-site count, and the number of
-conditional probabilities that required the defensive positivity
-regularization. A nonzero regularization count is a numerical warning, not an
-unreported change of target distribution, because generation and reverse
-scoring use the identical regularized proposal.
+Increasing chunks exposes more Slurm-level parallelism. Increasing workers
+uses more cores inside each task. The two controls are operational and are not
+part of the scientific configuration digest. There is no program-imposed
+aggregate CPU ceiling. Choose the chunk count before planning; changing it
+changes task boundaries and therefore requires a new output root. Worker and
+Slurm resource settings can be adjusted without replanning.
 
-## Artifacts
+## Update-method benchmarks
 
-Scientific outputs are immutable, content-addressed, Hive-partitioned
-Parquet datasets with canonical JSON manifests (`DCFT_PARQUET_V1`). Manifests
-record the complete parameter point, source digest, package/core versions,
-RNG contract, parent artifacts, global-ID range, Arrow schema, configuration
-hash digest, and SHA-256 checksums. Clean datasets retain bit-packed full
-Euclidean configurations. MC datasets retain one production row per outer ID
-plus explicitly keyed replicated `1x/2x/4x` diagnostic rows. Raw Gaussian ED
-records are retained for paired analysis.
+Use a representative lattice and record before choosing an update method or
+cluster shape:
 
-Operational `plan.json` and `state.json` files make tasks resumable; they are
-not scientific data. Validation failures remain in an immutable validation
-report and block promotion. Generated plots are checksummed and marked as
-regenerable. Campaign inspection reports only artifacts referenced by the
-current resumable state and counts older immutable attempts separately.
+```bash
+dcft benchmark updates \
+  --config configs/update-benchmark.toml \
+  --workers 8 \
+  --speed-sweeps 256 \
+  --probes 512 \
+  --thermalization-sweeps 128 \
+  --thermalization-measurements 128 \
+  --chains 8 \
+  --output artifacts/update-benchmark/local.json
+```
 
-## Statistical contract
+The JSON report contains, for every configured update method:
 
-- Autocorrelations use Geyer's initial-positive monotone sequence.
-- Moving-block bootstrap resamples contiguous outer IDs and complete curves.
-- Gaussian protocols are compared at paired outer IDs.
-- Posterior overlaps default to planted estimators; squared inner means are
-  diagnostics only.
-- I--MMSE uses a common resample at every gamma and reports the
-  Simpson-minus-trapezoid quadrature difference separately.
-- MC--exact curves use simultaneous max-t bootstrap bands.
-- The 1x/2x/4x ladder contributes a contiguous-outer-ID bootstrap upper
-  envelope for finite-inner absolute-value bias.
-- Local-X outcomes are enumerated through `N_noise <= 14`; larger runs are
-  labeled `sampled-binary-fallback`.
+- pure update sweep rate;
+- Geyer integrated autocorrelation times for energy and planted overlap;
+- effective planted-overlap samples per wall second;
+- split R-hat after the requested thermalization budget, using overdispersed
+  all-plus, all-minus, and random starts;
+- serial-versus-Rayon throughput and speedup for those independent chains;
+- Metropolis, corrected-Wolff, global, or TNMC acceptance statistics and TNMC
+  positivity-regularization counts.
+
+Timing is machine-specific. Repeat the benchmark for the lattice sizes,
+disorder strengths, noise types, and TNMC bond dimensions relevant to the
+production request. Do not select an update by sweep rate alone; the useful
+quantity is effective independent samples per wall time with acceptable R-hat
+and numerical diagnostics.
+
+## Cluster use
+
+Prepare the checkout once on the cluster:
+
+```bash
+cd /path/to/simulation
+uv sync --frozen
+dcft cluster doctor --config /path/to/campaign.toml
+```
+
+Then plan, inspect, and submit:
+
+```bash
+dcft campaign plan --config /path/to/campaign.toml
+dcft cluster render --config /path/to/campaign.toml
+dcft cluster submit --config /path/to/campaign.toml
+```
+
+The rendered scripts call `/path/to/simulation/.venv/bin/dcft` in place and
+export `RAYON_NUM_THREADS=$SLURM_CPUS_PER_TASK`. The program does not impose an
+array-concurrency or aggregate-CPU cap; Slurm and the account policy schedule
+the requested work. `[cluster].memory` means memory per task, not memory per
+CPU.
+
+Do not edit the checkout while its jobs are running. This is a normal
+operational rule rather than a deployment mechanism: artifacts record their
+source digest, and analysis refuses to mix artifacts from different source
+versions. If code changes, rebuild the checkout and use a new campaign output
+root or rerun the stale tasks.
+
+## Configuration
+
+The maintained starting points are:
+
+- `configs/local-smoke.toml`: small end-to-end development run;
+- `configs/update-benchmark.toml`: all update methods on one representative
+  point;
+- `configs/comparison.toml`: MC/ED comparison matrix;
+- `configs/scaling.toml`: large MC-only matrix;
+- `configs/acceptance.toml`: bounded scientific acceptance matrix;
+- `configs/mc-only-smoke.toml`: beyond-ED MC smoke path.
+
+Scientific tables define the lattice, protocols, MC/ED budgets, and statistics.
+`[execution]` and `[cluster]` define only how that work is divided and scheduled.
+Use a new `campaign.name` and `output_root` for a new scientific request.
+
+## Numerical implementation
+
+Rust provides periodic lattices, clean Wolff generation, random and sequential
+Metropolis, lazy global Metropolis, corrected Wolff, periodic TNMC, deterministic
+keyed xoshiro256++ streams, and observable accumulation. TNMC freezes a random
+row and column, contracts the remaining open rectangle with a truncated
+boundary MPS, and applies the exact Hastings correction.
+
+Python provides configuration and DAG planning, dense TFIM exact
+diagonalization, finite-transfer and transfer-ground priors, Parquet artifacts,
+Geyer autocorrelation estimates, moving-block resampling, I--MMSE integration,
+analysis, plotting, validation, Slurm rendering, and update benchmarks.
+
+Scientific results remain content-addressed Parquet artifacts with checksums,
+parent links, source digests, complete parameter metadata, and deterministic
+row ordering. `plan.json` and `state.json` are ordinary resumability records,
+not scientific outputs.

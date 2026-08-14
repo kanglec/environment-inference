@@ -43,9 +43,23 @@ def _task(kind: str, dependencies: Iterable[str] = (), **parameters: Any) -> Tas
     return Task(identifier, kind, tuple(sorted(dependencies)), parameters)
 
 
+def chunk_ranges(count: int, chunks: int) -> tuple[tuple[int, int], ...]:
+    """Split ``range(count)`` into nonempty, balanced contiguous chunks."""
+    if count < 1 or chunks < 1 or chunks > count:
+        raise ValueError("chunks must satisfy 1 <= chunks <= count")
+    base, remainder = divmod(count, chunks)
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    for chunk_id in range(chunks):
+        stop = start + base + (1 if chunk_id < remainder else 0)
+        ranges.append((start, stop))
+        start = stop
+    return tuple(ranges)
+
+
 def build_plan(config: CampaignConfig) -> Plan:
     tasks: list[Task] = []
-    clean_by_size: dict[int, Task] = {}
+    analysis_inputs: list[str] = []
     if config.mc.enabled:
         for lx in config.lattice.sizes:
             clean = _task(
@@ -56,7 +70,7 @@ def build_plan(config: CampaignConfig) -> Plan:
                 global_id_stop=config.mc.outer_records,
             )
             tasks.append(clean)
-            clean_by_size[lx] = clean
+            analysis_inputs.append(clean.task_id)
             for noise in config.protocols.noises:
                 for p in config.protocols.p_values:
                     for point in resolve_measurements(
@@ -65,45 +79,66 @@ def build_plan(config: CampaignConfig) -> Plan:
                         config.protocols.gaussian_fractions,
                     ):
                         for update in config.mc.updates:
-                            tasks.append(
+                            common = {
+                                "lx": lx,
+                                "lt": config.lattice.lt(lx),
+                                "noise": noise,
+                                "p": p,
+                                "measurement": point.name,
+                                "protocol_id": point.identifier,
+                                "gamma": point.gamma,
+                                "update": update,
+                                "tnmc_bond_dimension": (
+                                    config.mc.tnmc_bond_dimension if update == "tnmc" else None
+                                ),
+                            }
+                            chunks = [
                                 _task(
                                     "mc",
                                     [clean.task_id],
-                                    lx=lx,
-                                    lt=config.lattice.lt(lx),
-                                    noise=noise,
-                                    p=p,
-                                    measurement=point.name,
-                                    protocol_id=point.identifier,
-                                    gamma=point.gamma,
-                                    update=update,
-                                    tnmc_bond_dimension=(
-                                        config.mc.tnmc_bond_dimension if update == "tnmc" else None
-                                    ),
-                                    global_id_start=0,
-                                    global_id_stop=config.mc.outer_records,
+                                    **common,
+                                    chunk_id=chunk_id,
+                                    chunk_count=config.execution.mc_chunks,
+                                    global_id_start=start,
+                                    global_id_stop=stop,
                                 )
+                                for chunk_id, (start, stop) in enumerate(
+                                    chunk_ranges(
+                                        config.mc.outer_records,
+                                        config.execution.mc_chunks,
+                                    )
+                                )
+                            ]
+                            tasks.extend(chunks)
+                            merge = _task(
+                                "merge",
+                                [chunk.task_id for chunk in chunks],
+                                **common,
+                                chunk_count=config.execution.mc_chunks,
+                                global_id_start=0,
+                                global_id_stop=config.mc.outer_records,
                             )
+                            tasks.append(merge)
+                            analysis_inputs.append(merge.task_id)
     if config.ed.enabled:
         for lx in config.lattice.sizes:
             if lx <= config.ed.max_sites:
-                tasks.append(
-                    _task(
-                        "exact",
-                        lx=lx,
-                        lt=config.lattice.lt(lx),
-                        noises=list(config.protocols.noises),
-                        p_values=list(config.protocols.p_values),
-                        priors=list(config.ed.priors),
-                    )
+                exact = _task(
+                    "exact",
+                    lx=lx,
+                    lt=config.lattice.lt(lx),
+                    noises=list(config.protocols.noises),
+                    p_values=list(config.protocols.p_values),
+                    priors=list(config.ed.priors),
                 )
-    compute = [task.task_id for task in tasks]
-    analysis = _task("analysis", compute)
-    validation = _task("validation", [*compute, analysis.task_id])
+                tasks.append(exact)
+                analysis_inputs.append(exact.task_id)
+    analysis = _task("analysis", analysis_inputs)
+    validation = _task("validation", [analysis.task_id])
     tasks.extend((analysis, validation))
     config_payload = scientific_config(config)
     digest = hashlib.sha256(canonical_json(config_payload)).hexdigest()
-    return Plan(2, config.campaign.name, digest, tuple(tasks))
+    return Plan(3, config.campaign.name, digest, tuple(tasks))
 
 
 def plan_path(config: CampaignConfig) -> Path:
@@ -140,7 +175,8 @@ def write_plan(config: CampaignConfig) -> Plan:
         existing = cast(dict[str, Any], json.loads(destination.read_text()))
         if existing != _plan_dict(plan):
             raise PlanError(
-                f"existing plan at {destination} was produced by a different configuration"
+                f"existing plan at {destination} has a different scientific request or "
+                "chunk layout; choose a new output_root"
             )
     else:
         destination.write_bytes(canonical_json(_plan_dict(plan)))

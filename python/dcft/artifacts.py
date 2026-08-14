@@ -16,7 +16,7 @@ from urllib.parse import quote
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from . import QUALIFICATION_STATUS, SCHEMA_VERSION, __version__, _core
+from . import SCHEMA_VERSION, __version__, _core
 
 
 class ArtifactError(RuntimeError):
@@ -235,7 +235,6 @@ def write_artifact(
             "artifact_id": artifact_id,
             "kind": kind,
             "status": "complete",
-            "qualification": QUALIFICATION_STATUS,
             "package_version": __version__,
             "rust_core_version": _core.version(),
             "source_digest": code_digest,

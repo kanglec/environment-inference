@@ -1,42 +1,42 @@
 schema_version = 2
 
 [campaign]
-name = "mc-only-beyond-ed"
-preset = "scaling"
-seed = 12994781566227106604
-output_root = "../artifacts/mc-only-smoke"
+name = "update-benchmark"
+preset = "test"
+seed = 6840227781351331448
+output_root = "../artifacts/update-benchmark"
 project_root = ".."
-scratch_root = "../scratch/mc-only-smoke"
+scratch_root = "../scratch/update-benchmark"
 
 [lattice]
-sizes = [10]
+sizes = [8]
 lt_factor = 2
 regularization = "isotropic"
 
 [protocols]
-noises = ["z", "zz"]
+noises = ["z"]
 p_values = [0.2]
-measurements = ["heterodyne", "homodyne", "local-x"]
-gaussian_fractions = [0.0, 0.5, 1.0]
+measurements = ["heterodyne"]
+gaussian_fractions = []
 
 [mc]
 enabled = true
 outer_records = 16
-clean_thermalization_sweeps = 200
-clean_saving_interval = 10
-posterior_decorrelation_gap = 30
-inner_measurements = 32
+clean_thermalization_sweeps = 500
+clean_saving_interval = 20
+posterior_decorrelation_gap = 32
+inner_measurements = 64
 inner_saving_interval = 2
-updates = ["tnmc"]
-separations = [0, 1, 2, 3, 5]
+updates = ["metropolis", "sequential-metropolis", "metropolis-global", "corrected-wolff", "tnmc"]
+separations = "all"
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 4
 replicated_chains = 2
-tnmc_bond_dimension = 16
+tnmc_bond_dimension = 8
 
 [ed]
 enabled = false
-max_sites = 8
+max_sites = 0
 gaussian_outer_records = 0
 local_x_enumeration_limit = 14
 sampled_binary_records = 0
@@ -50,12 +50,12 @@ confidence = 0.95
 
 [execution]
 mc_chunks = 2
-local_workers = 4
+local_workers = 8
 
 [cluster]
 scheduler = "slurm"
 partition = "day"
 account = "pi_mc2832"
 time_limit = "00:30:00"
-cpus_per_task = 4
-memory = "2G"
+cpus_per_task = 8
+memory = "4G"

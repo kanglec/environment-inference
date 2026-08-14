@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pyarrow as pa
 
-from . import CLUSTER_QUALIFICATION_STATUS, _core
+from . import _core
 from .artifacts import (
     Artifact,
     discover_artifacts,
@@ -478,16 +478,6 @@ def validate_campaign(
                 "MC-only smoke includes a lattice beyond the configured ED range",
             )
         )
-    checks.append(
-        Check(
-            "cluster-qualification",
-            config.campaign.name,
-            None,
-            None,
-            True,
-            "Bouchet doctor, frozen install, and CPU-only day smoke completed 2026-08-13; root job 22146897",
-        )
-    )
     failures = [check for check in checks if not check.passed]
     schema = pa.schema(
         [
@@ -508,7 +498,6 @@ def validate_campaign(
             "required_checks": len(checks),
             "failures": len(failures),
             "promotion_allowed": not failures,
-            "cluster_qualification": CLUSTER_QUALIFICATION_STATUS,
         },
         project_root=config.campaign.project_root,
         parents=tuple(artifact.artifact_id for artifact in parents),
@@ -528,7 +517,6 @@ def validate_campaign(
         "failures": len(failures),
         "report_artifact": report.artifact_id,
         "failed_checks": [f"{check.name}: {check.scope}" for check in failures[:20]],
-        "cluster_qualification": CLUSTER_QUALIFICATION_STATUS,
     }
     if failures and raise_on_failure:
         raise ValidationError(f"{len(failures)} validation checks failed; report={report.path}")

@@ -1,8 +1,10 @@
+mod benchmark;
 mod lattice;
 mod model;
 mod tnmc;
 mod update;
 
+pub use benchmark::{UpdateBenchmark, benchmark_update};
 pub use lattice::Lattice;
 pub use model::{Couplings, Model};
 pub use update::{Update, UpdateStats};
@@ -11,6 +13,8 @@ use crate::error::{DcftError, Result};
 use crate::observables::{Accumulator, ObservableSummary};
 use crate::physics::Noise;
 use crate::rng::Rng64;
+use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PosteriorResult {
@@ -27,6 +31,16 @@ pub struct DiagnosticTrace {
     pub boundary_magnetization: Vec<f64>,
     pub planted_spin_overlap: Vec<f64>,
     pub planted_bond_overlap: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PosteriorJob {
+    pub record_couplings: Vec<f64>,
+    pub planted_configuration: Vec<u8>,
+    pub global_id: u64,
+    pub stream_label: String,
+    pub measurements: usize,
+    pub retain_trace: bool,
 }
 
 pub fn generate_clean_configurations(
@@ -158,5 +172,56 @@ pub fn sample_posterior(
         updates: statistics,
         final_configuration: lattice.pack(),
         trace,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn sample_posteriors_parallel(
+    lx: usize,
+    lt: usize,
+    couplings: Couplings,
+    noise: Noise,
+    update_method: Update,
+    seed: u64,
+    decorrelation_gap: usize,
+    saving_interval: usize,
+    separations: &[usize],
+    jobs: Vec<PosteriorJob>,
+    workers: usize,
+) -> Result<Vec<PosteriorResult>> {
+    if jobs.is_empty() {
+        return Err(DcftError::invalid("posterior batch cannot be empty"));
+    }
+    if workers == 0 {
+        return Err(DcftError::invalid(
+            "posterior batch workers must be positive",
+        ));
+    }
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .map_err(|error| DcftError::invalid(format!("cannot build Rayon pool: {error}")))?;
+    pool.install(|| {
+        jobs.into_par_iter()
+            .map(|job| {
+                sample_posterior(
+                    lx,
+                    lt,
+                    couplings,
+                    noise,
+                    job.record_couplings,
+                    &job.planted_configuration,
+                    update_method,
+                    seed,
+                    job.global_id,
+                    &job.stream_label,
+                    decorrelation_gap,
+                    job.measurements,
+                    saving_interval,
+                    separations,
+                    job.retain_trace,
+                )
+            })
+            .collect()
     })
 }

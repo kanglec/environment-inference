@@ -83,6 +83,12 @@ class StatisticsSection:
 
 
 @dataclass(frozen=True)
+class ExecutionSection:
+    mc_chunks: int
+    local_workers: int
+
+
+@dataclass(frozen=True)
 class ClusterSection:
     scheduler: str
     partition: str
@@ -90,10 +96,6 @@ class ClusterSection:
     time_limit: str
     cpus_per_task: int
     memory: str
-    max_array_concurrency: int
-    use_modules: bool
-    python_module: str
-    rust_module: str
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class CampaignConfig:
     mc: McSection
     ed: EdSection
     statistics: StatisticsSection
+    execution: ExecutionSection
     cluster: ClusterSection
 
     def separations_for(self, lx: int) -> tuple[int, ...]:
@@ -176,6 +179,7 @@ def load_config(path: str | Path) -> CampaignConfig:
     mc_raw = _table(raw, "mc")
     ed_raw = _table(raw, "ed")
     stats_raw = _table(raw, "statistics")
+    execution_raw = _table(raw, "execution")
     cluster_raw = _table(raw, "cluster")
 
     campaign = CampaignSection(
@@ -237,6 +241,10 @@ def load_config(path: str | Path) -> CampaignConfig:
         block_length=_required(stats_raw, "block_length", int),
         confidence=_number(stats_raw, "confidence"),
     )
+    execution = ExecutionSection(
+        mc_chunks=_required(execution_raw, "mc_chunks", int),
+        local_workers=_required(execution_raw, "local_workers", int),
+    )
     cluster = ClusterSection(
         scheduler=_required(cluster_raw, "scheduler", str),
         partition=_required(cluster_raw, "partition", str),
@@ -244,12 +252,6 @@ def load_config(path: str | Path) -> CampaignConfig:
         time_limit=_required(cluster_raw, "time_limit", str),
         cpus_per_task=_required(cluster_raw, "cpus_per_task", int),
         memory=_required(cluster_raw, "memory", str),
-        max_array_concurrency=_required(cluster_raw, "max_array_concurrency", int),
-        use_modules=_required(cluster_raw, "use_modules", bool)
-        if "use_modules" in cluster_raw
-        else True,
-        python_module=_required(cluster_raw, "python_module", str),
-        rust_module=_required(cluster_raw, "rust_module", str),
     )
     config = CampaignConfig(
         schema_version=schema_version,
@@ -260,6 +262,7 @@ def load_config(path: str | Path) -> CampaignConfig:
         mc=mc,
         ed=ed,
         statistics=statistics,
+        execution=execution,
         cluster=cluster,
     )
     validate_config(config)
@@ -272,8 +275,8 @@ def validate_config(config: CampaignConfig) -> None:
     def duplicated(values: tuple[Any, ...]) -> bool:
         return len(values) != len(set(values))
 
-    if config.schema_version != 1:
-        problems.append("schema_version must equal 1")
+    if config.schema_version != 2:
+        problems.append("schema_version must equal 2")
     if config.campaign.preset not in {"comparison", "scaling", "test"}:
         problems.append("campaign.preset must be comparison, scaling, or test")
     if config.campaign.output_root == config.campaign.scratch_root:
@@ -369,17 +372,14 @@ def validate_config(config: CampaignConfig) -> None:
         problems.append("bootstrap_resamples must be >= 20 and block_length positive")
     if not 0.0 < config.statistics.confidence < 1.0:
         problems.append("statistics.confidence must lie in (0, 1)")
+    if config.execution.mc_chunks < 1 or config.execution.local_workers < 1:
+        problems.append("execution mc_chunks and local_workers must be positive")
+    if config.execution.mc_chunks > config.mc.outer_records:
+        problems.append("execution.mc_chunks cannot exceed mc.outer_records")
     if config.cluster.scheduler != "slurm":
         problems.append("only the slurm cluster scheduler is supported")
-    if config.cluster.cpus_per_task < 1 or config.cluster.max_array_concurrency < 1:
-        problems.append("cluster CPUs and max_array_concurrency must be positive")
-    if config.cluster.partition != "day":
-        problems.append("Bouchet development campaigns default to the day partition")
-    if config.cluster.use_modules:
-        if not config.cluster.python_module or not config.cluster.rust_module:
-            problems.append("cluster module names must include explicit versions")
-        if "/" not in config.cluster.python_module or "/" not in config.cluster.rust_module:
-            problems.append("cluster modules must be version-qualified (name/version)")
+    if config.cluster.cpus_per_task < 1:
+        problems.append("cluster cpus_per_task must be positive")
     if problems:
         raise ConfigError("; ".join(problems))
 
@@ -412,5 +412,6 @@ def scientific_config(config: CampaignConfig) -> dict[str, Any]:
         for key, value in campaign.items()
         if key not in {"output_root", "project_root", "scratch_root"}
     }
+    payload.pop("execution")
     payload.pop("cluster")
     return payload

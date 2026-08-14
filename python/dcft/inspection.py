@@ -43,7 +43,7 @@ def inspect_path(path: Path) -> dict[str, Any]:
                     "artifact_id": artifact.artifact_id,
                     "kind": artifact.manifest["kind"],
                     "rows": artifact.manifest["row_count"],
-                    "qualification": artifact.manifest["qualification"],
+                    "source_digest": artifact.manifest["source_digest"],
                 }
                 for artifact in artifacts
             ],

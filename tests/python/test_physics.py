@@ -144,6 +144,42 @@ def test_mc_bytes_do_not_depend_on_thread_count_environment(
     assert run(1) == run(4)
 
 
+def test_parallel_posterior_batch_preserves_order_and_results() -> None:
+    lx, lt = 4, 8
+    kx, kt = _core.lattice_couplings("isotropic", None)
+    planted = _core.clean_configurations(lx, lt, kx, kt, 91, 8, 2, 4)
+    records = []
+    for global_id, packed in enumerate(planted):
+        boundary = _core.boundary_from_packed(lx, lt, packed)
+        records.append(
+            _core.generate_record(boundary, "z", "heterodyne", 0.2, 91, global_id)[
+                "record_couplings"
+            ]
+        )
+    arguments = (
+        lx,
+        lt,
+        kx,
+        kt,
+        "z",
+        records,
+        planted,
+        "metropolis",
+        91,
+        list(range(4)),
+        [f"batch/{global_id}" for global_id in range(4)],
+        4,
+        [8] * 4,
+        1,
+        [0, 1, 2],
+        [False] * 4,
+        8,
+    )
+    serial = _core.posterior_observables_batch(*arguments, 1)
+    parallel = _core.posterior_observables_batch(*arguments, 4)
+    assert parallel == serial
+
+
 @pytest.mark.parametrize("noise", ["z", "zz"])
 def test_tnmc_python_entry_point_reports_block_statistics(noise: str) -> None:
     kx, kt = _core.lattice_couplings("isotropic", None)

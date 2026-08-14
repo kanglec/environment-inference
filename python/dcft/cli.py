@@ -9,8 +9,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from . import CLUSTER_QUALIFICATION_STATUS
 from .analysis import analyze_campaign
+from .benchmark import benchmark_updates
 from .campaign import run_campaign
 from .cluster import cluster_status, doctor, render_cluster, resume, submit
 from .config import CampaignConfig, load_config
@@ -40,8 +40,29 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config(run)
     run.add_argument("--executor", choices=("local",), default="local")
     run.add_argument("--task-id", action="append", default=None)
+    run.add_argument("--workers", type=int)
 
-    cluster = subcommands.add_parser("cluster", help="render and operate Bouchet Slurm jobs")
+    benchmark = subcommands.add_parser("benchmark", help="benchmark MC update methods")
+    benchmark_commands = benchmark.add_subparsers(dest="benchmark_command", required=True)
+    updates = benchmark_commands.add_parser("updates")
+    _add_config(updates)
+    updates.add_argument("--lx", type=int)
+    updates.add_argument("--noise")
+    updates.add_argument("--p", type=float)
+    updates.add_argument("--measurement")
+    updates.add_argument("--gamma", type=float)
+    updates.add_argument("--update", action="append")
+    updates.add_argument("--warmup-sweeps", type=int, default=64)
+    updates.add_argument("--speed-sweeps", type=int, default=128)
+    updates.add_argument("--probes", type=int, default=256)
+    updates.add_argument("--probe-interval", type=int, default=1)
+    updates.add_argument("--thermalization-sweeps", type=int, default=64)
+    updates.add_argument("--thermalization-measurements", type=int, default=64)
+    updates.add_argument("--chains", type=int, default=4)
+    updates.add_argument("--workers", type=int)
+    updates.add_argument("--output", type=Path)
+
+    cluster = subcommands.add_parser("cluster", help="render and operate Slurm jobs")
     cluster_commands = cluster.add_subparsers(dest="cluster_command", required=True)
     render = cluster_commands.add_parser("render")
     _add_config(render)
@@ -93,6 +114,7 @@ def dispatch(arguments: argparse.Namespace) -> int:
                     config,
                     executor=arguments.executor,
                     task_ids=arguments.task_id,
+                    workers=arguments.workers,
                 )
             )
             return 0
@@ -111,11 +133,34 @@ def dispatch(arguments: argparse.Namespace) -> int:
                     {
                         "status": "failed",
                         "error": str(error),
-                        "cluster_qualification": CLUSTER_QUALIFICATION_STATUS,
                     }
                 )
                 return 2
             _print(result)
+            return 0
+    if arguments.command == "benchmark":
+        config = _config(arguments)
+        if arguments.benchmark_command == "updates":
+            _print(
+                benchmark_updates(
+                    config,
+                    lx=arguments.lx,
+                    noise=arguments.noise,
+                    p=arguments.p,
+                    measurement=arguments.measurement,
+                    gamma=arguments.gamma,
+                    updates=None if arguments.update is None else tuple(arguments.update),
+                    warmup_sweeps=arguments.warmup_sweeps,
+                    speed_sweeps=arguments.speed_sweeps,
+                    probes=arguments.probes,
+                    probe_interval=arguments.probe_interval,
+                    thermalization_sweeps=arguments.thermalization_sweeps,
+                    thermalization_measurements=arguments.thermalization_measurements,
+                    chains=arguments.chains,
+                    workers=arguments.workers,
+                    output=arguments.output,
+                )
+            )
             return 0
     if arguments.command == "cluster":
         if arguments.cluster_command == "status":
@@ -131,7 +176,6 @@ def dispatch(arguments: argparse.Namespace) -> int:
                     "task_file": str(rendered.task_file),
                     "doctor": str(rendered.doctor_script),
                     "tasks": rendered.task_count,
-                    "cluster_qualification": CLUSTER_QUALIFICATION_STATUS,
                 }
             )
             return 0

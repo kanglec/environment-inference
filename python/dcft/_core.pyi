@@ -6,7 +6,9 @@ def measurement_registry() -> list[str]: ...
 def noise_registry() -> list[str]: ...
 def update_registry() -> list[str]: ...
 def observable_registry() -> list[str]: ...
-def protocol_parameters(measurement: str, p: float, gamma: float | None = ...) -> dict[str, Any]: ...
+def protocol_parameters(
+    measurement: str, p: float, gamma: float | None = ...
+) -> dict[str, Any]: ...
 def noise_variables(boundary_spins: list[int], noise: str) -> list[int]: ...
 def noise_eigenvalues_all(sites: int, noise: str) -> list[list[int]]: ...
 def observable_eigenvalues(
@@ -64,4 +66,45 @@ def posterior_observables(
     separations: list[int],
     retain_trace: bool,
     tnmc_bond_dimension: int,
+) -> dict[str, Any]: ...
+def posterior_observables_batch(
+    lx: int,
+    lt: int,
+    kx: float,
+    kt: float,
+    noise: str,
+    record_couplings: list[list[float]],
+    planted_configurations: list[list[int]],
+    update: str,
+    seed: int,
+    global_ids: list[int],
+    stream_labels: list[str],
+    decorrelation_gap: int,
+    measurements: list[int],
+    saving_interval: int,
+    separations: list[int],
+    retain_traces: list[bool],
+    tnmc_bond_dimension: int,
+    workers: int,
+) -> list[dict[str, Any]]: ...
+def benchmark_update_method(
+    lx: int,
+    lt: int,
+    kx: float,
+    kt: float,
+    noise: str,
+    record_couplings: list[float],
+    planted_configuration: list[int],
+    update: str,
+    seed: int,
+    global_id: int,
+    warmup_sweeps: int,
+    speed_sweeps: int,
+    probes: int,
+    probe_interval: int,
+    thermalization_sweeps: int,
+    thermalization_measurements: int,
+    chains: int,
+    tnmc_bond_dimension: int,
+    workers: int,
 ) -> dict[str, Any]: ...

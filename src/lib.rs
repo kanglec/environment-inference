@@ -277,7 +277,33 @@ fn posterior_observables(
         retain_trace,
     )
     .map_err(python_error)?;
+    posterior_result_dictionary(py, result)
+}
 
+fn set_update_statistics(output: &Bound<'_, PyDict>, statistics: mc::UpdateStats) -> PyResult<()> {
+    output.set_item("sweeps", statistics.sweeps)?;
+    output.set_item("local_proposed", statistics.local_proposed)?;
+    output.set_item("local_accepted", statistics.local_accepted)?;
+    output.set_item("cluster_proposed", statistics.cluster_proposed)?;
+    output.set_item("cluster_accepted", statistics.cluster_accepted)?;
+    output.set_item("cluster_sites_proposed", statistics.cluster_sites_proposed)?;
+    output.set_item("global_proposed", statistics.global_proposed)?;
+    output.set_item("global_attempted", statistics.global_attempted)?;
+    output.set_item("global_accepted", statistics.global_accepted)?;
+    output.set_item("tnmc_proposed", statistics.tnmc_proposed)?;
+    output.set_item("tnmc_accepted", statistics.tnmc_accepted)?;
+    output.set_item("tnmc_sites_proposed", statistics.tnmc_sites_proposed)?;
+    output.set_item(
+        "tnmc_conditionals_regularized",
+        statistics.tnmc_conditionals_regularized,
+    )?;
+    Ok(())
+}
+
+fn posterior_result_dictionary(
+    py: Python<'_>,
+    result: mc::PosteriorResult,
+) -> PyResult<Py<PyDict>> {
     let output = PyDict::new(py);
     let observables = result.observables;
     output.set_item("samples", observables.samples)?;
@@ -295,23 +321,7 @@ fn posterior_observables(
         "bond_correlator_profile",
         observables.bond_correlator_profile,
     )?;
-    let statistics = result.updates;
-    output.set_item("sweeps", statistics.sweeps)?;
-    output.set_item("local_proposed", statistics.local_proposed)?;
-    output.set_item("local_accepted", statistics.local_accepted)?;
-    output.set_item("cluster_proposed", statistics.cluster_proposed)?;
-    output.set_item("cluster_accepted", statistics.cluster_accepted)?;
-    output.set_item("cluster_sites_proposed", statistics.cluster_sites_proposed)?;
-    output.set_item("global_proposed", statistics.global_proposed)?;
-    output.set_item("global_attempted", statistics.global_attempted)?;
-    output.set_item("global_accepted", statistics.global_accepted)?;
-    output.set_item("tnmc_proposed", statistics.tnmc_proposed)?;
-    output.set_item("tnmc_accepted", statistics.tnmc_accepted)?;
-    output.set_item("tnmc_sites_proposed", statistics.tnmc_sites_proposed)?;
-    output.set_item(
-        "tnmc_conditionals_regularized",
-        statistics.tnmc_conditionals_regularized,
-    )?;
+    set_update_statistics(&output, result.updates)?;
     output.set_item("final_configuration", result.final_configuration)?;
     output.set_item("energy_trace", result.trace.energy)?;
     output.set_item("magnetization_trace", result.trace.magnetization)?;
@@ -327,6 +337,168 @@ fn posterior_observables(
         "planted_bond_overlap_trace",
         result.trace.planted_bond_overlap,
     )?;
+    Ok(output.unbind())
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn posterior_observables_batch(
+    py: Python<'_>,
+    lx: usize,
+    lt: usize,
+    kx: f64,
+    kt: f64,
+    noise: &str,
+    record_couplings: Vec<Vec<f64>>,
+    planted_configurations: Vec<Vec<u8>>,
+    update: &str,
+    seed: u64,
+    global_ids: Vec<u64>,
+    stream_labels: Vec<String>,
+    decorrelation_gap: usize,
+    measurements: Vec<usize>,
+    saving_interval: usize,
+    separations: Vec<usize>,
+    retain_traces: Vec<bool>,
+    tnmc_bond_dimension: usize,
+    workers: usize,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let count = record_couplings.len();
+    if count == 0
+        || [
+            planted_configurations.len(),
+            global_ids.len(),
+            stream_labels.len(),
+            measurements.len(),
+            retain_traces.len(),
+        ]
+        .into_iter()
+        .any(|length| length != count)
+    {
+        return Err(PyValueError::new_err(
+            "posterior batch arrays must have the same positive length",
+        ));
+    }
+    let couplings = Couplings::new(kx, kt).map_err(python_error)?;
+    let noise = Noise::parse(noise).map_err(python_error)?;
+    let update = Update::parse_with_tnmc_bond_dimension(update, tnmc_bond_dimension)
+        .map_err(python_error)?;
+    let jobs = record_couplings
+        .into_iter()
+        .zip(planted_configurations)
+        .zip(global_ids)
+        .zip(stream_labels)
+        .zip(measurements)
+        .zip(retain_traces)
+        .map(
+            |(((((record, planted), global_id), stream_label), measurements), retain_trace)| {
+                mc::PosteriorJob {
+                    record_couplings: record,
+                    planted_configuration: planted,
+                    global_id,
+                    stream_label,
+                    measurements,
+                    retain_trace,
+                }
+            },
+        )
+        .collect();
+    mc::sample_posteriors_parallel(
+        lx,
+        lt,
+        couplings,
+        noise,
+        update,
+        seed,
+        decorrelation_gap,
+        saving_interval,
+        &separations,
+        jobs,
+        workers,
+    )
+    .map_err(python_error)?
+    .into_iter()
+    .map(|result| posterior_result_dictionary(py, result))
+    .collect()
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn benchmark_update_method(
+    py: Python<'_>,
+    lx: usize,
+    lt: usize,
+    kx: f64,
+    kt: f64,
+    noise: &str,
+    record_couplings: Vec<f64>,
+    planted_configuration: Vec<u8>,
+    update: &str,
+    seed: u64,
+    global_id: u64,
+    warmup_sweeps: usize,
+    speed_sweeps: usize,
+    probes: usize,
+    probe_interval: usize,
+    thermalization_sweeps: usize,
+    thermalization_measurements: usize,
+    chains: usize,
+    tnmc_bond_dimension: usize,
+    workers: usize,
+) -> PyResult<Py<PyDict>> {
+    let couplings = Couplings::new(kx, kt).map_err(python_error)?;
+    let noise = Noise::parse(noise).map_err(python_error)?;
+    let update = Update::parse_with_tnmc_bond_dimension(update, tnmc_bond_dimension)
+        .map_err(python_error)?;
+    let report = mc::benchmark_update(
+        lx,
+        lt,
+        couplings,
+        noise,
+        record_couplings,
+        &planted_configuration,
+        update,
+        seed,
+        global_id,
+        warmup_sweeps,
+        speed_sweeps,
+        probes,
+        probe_interval,
+        thermalization_sweeps,
+        thermalization_measurements,
+        chains,
+        workers,
+    )
+    .map_err(python_error)?;
+    let output = PyDict::new(py);
+    output.set_item("update", report.update)?;
+    output.set_item("workers", report.workers)?;
+    output.set_item("speed_sweeps", report.speed_sweeps)?;
+    output.set_item("speed_elapsed_seconds", report.speed_elapsed_seconds)?;
+    output.set_item("energy_trace", report.energy_trace)?;
+    output.set_item(
+        "boundary_magnetization_trace",
+        report.boundary_magnetization_trace,
+    )?;
+    output.set_item("planted_overlap_trace", report.planted_overlap_trace)?;
+    output.set_item("thermalization_energy", report.thermalization_energy)?;
+    output.set_item(
+        "thermalization_boundary_magnetization",
+        report.thermalization_boundary_magnetization,
+    )?;
+    output.set_item(
+        "thermalization_planted_overlap",
+        report.thermalization_planted_overlap,
+    )?;
+    output.set_item(
+        "thermalization_serial_elapsed_seconds",
+        report.thermalization_serial_elapsed_seconds,
+    )?;
+    output.set_item(
+        "thermalization_elapsed_seconds",
+        report.thermalization_elapsed_seconds,
+    )?;
+    set_update_statistics(&output, report.updates)?;
     Ok(output.unbind())
 }
 
@@ -350,5 +522,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(boundary_from_packed, module)?)?;
     module.add_function(wrap_pyfunction!(configuration_observables, module)?)?;
     module.add_function(wrap_pyfunction!(posterior_observables, module)?)?;
+    module.add_function(wrap_pyfunction!(posterior_observables_batch, module)?)?;
+    module.add_function(wrap_pyfunction!(benchmark_update_method, module)?)?;
     Ok(())
 }

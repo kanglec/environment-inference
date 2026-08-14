@@ -18,11 +18,53 @@ def test_cli_plan_and_render(smoke_config_path: Path, capsys: pytest.CaptureFixt
     )
     plan = json.loads(capsys.readouterr().out)
     assert plan["kinds"]["clean"] == 1
+    assert plan["kinds"]["merge"] > 0
     assert (
         dispatch(parser.parse_args(["cluster", "render", "--config", str(smoke_config_path)])) == 0
     )
     render = json.loads(capsys.readouterr().out)
-    assert render["cluster_qualification"] == "complete"
+    assert render["tasks"] > plan["kinds"]["mc"]
+
+
+def test_cli_update_benchmark_covers_speed_mixing_and_thermalization(
+    smoke_config_path: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from dcft.cli import build_parser
+
+    destination = tmp_path / "benchmark.json"
+    arguments = [
+        "benchmark",
+        "updates",
+        "--config",
+        str(smoke_config_path),
+        "--update",
+        "metropolis",
+        "--warmup-sweeps",
+        "1",
+        "--speed-sweeps",
+        "2",
+        "--probes",
+        "4",
+        "--thermalization-sweeps",
+        "1",
+        "--thermalization-measurements",
+        "4",
+        "--chains",
+        "2",
+        "--workers",
+        "2",
+        "--output",
+        str(destination),
+    ]
+    assert dispatch(build_parser().parse_args(arguments)) == 0
+    report = json.loads(capsys.readouterr().out)
+    method = report["methods"][0]
+    assert method["sweep_speed"]["sweeps_per_second"] > 0.0
+    assert method["autocorrelation"]["planted_overlap"]["tau_sweeps"] >= 0.5
+    assert method["thermalization"]["chains"] == 2
+    assert destination.is_file()
 
 
 def test_inspect_campaign_reports_only_state_referenced_artifacts(
