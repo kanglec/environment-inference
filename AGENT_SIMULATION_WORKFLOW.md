@@ -17,6 +17,8 @@ rsync where needed. Do not add wrappers around short, clear operations.
   `../local/tensor-network-monte-carlo/arXiv-2409.06538v2/main.tex`.
 - Simulation contract:
   `../notes/archive/all-to-all-approximation/section/simulation.tex`.
+- Evidence-based update parameter guidance:
+  `docs/update-methods/` (currently `docs/update-methods/tnmc.md`).
 - Maintained implementation: this repository outside `archive/`.
 - Historic implementation: `archive/`, read-only reference for ideas and
   checks, never a production pipeline.
@@ -35,8 +37,10 @@ Choose the nearest maintained configuration:
 - `configs/local-smoke.toml` for development verification;
 - `configs/update-benchmark.toml` for update selection and resource tuning.
 
-Create a request-specific TOML file. Record every choice that affects the
-answer:
+Create a request-specific TOML file in an ignored campaign artifact/scratch
+directory or a temporary path. Preserve an exact copy with the results. Add a
+file under `configs/` only when it is intended to be a maintained reusable
+preset. Record every choice that affects the answer:
 
 - lattice sizes, temporal factor, and regularization;
 - Z or ZZ noise, probabilities, measurements, and Gaussian grid;
@@ -49,6 +53,10 @@ Ask the user only when plausible choices answer materially different questions.
 Otherwise run a conservative pilot and state the assumptions.
 
 ## Benchmark before committing production resources
+
+Read the applicable method guidance under `docs/update-methods/` before
+choosing the initial parameter grid. Treat those values as benchmark starting
+points rather than universal defaults.
 
 Update costs and mixing depend strongly on size and disorder. For a new regime,
 run:
