@@ -64,20 +64,17 @@ impl Update {
             }
             Self::MetropolisGlobal => {
                 random_metropolis(model, lattice, rng, statistics)?;
-                statistics.global_proposed += 1;
-                if rng.bool() {
-                    statistics.global_attempted += 1;
-                    if accept(model.global_flip_delta(lattice), rng) {
-                        lattice.flip_all();
-                        statistics.global_accepted += 1;
-                    }
-                }
+                lazy_global_flip(model, lattice, rng, statistics);
                 Ok(())
             }
             Self::CorrectedWolff => corrected_wolff(model, lattice, rng, statistics),
             Self::Tnmc {
                 maximum_bond_dimension,
-            } => super::tnmc::update(model, lattice, rng, statistics, maximum_bond_dimension),
+            } => {
+                super::tnmc::update(model, lattice, rng, statistics, maximum_bond_dimension)?;
+                lazy_global_flip(model, lattice, rng, statistics);
+                Ok(())
+            }
         }
     }
 }
@@ -206,4 +203,79 @@ fn grow_clean_cluster(model: &Model, lattice: &Lattice, rng: &mut Rng64) -> Resu
 
 fn accept(delta: f64, rng: &mut Rng64) -> bool {
     delta <= 0.0 || rng.log_uniform() < -delta
+}
+
+fn lazy_global_flip(
+    model: &Model,
+    lattice: &mut Lattice,
+    rng: &mut Rng64,
+    statistics: &mut UpdateStats,
+) {
+    statistics.global_proposed += 1;
+    if rng.bool() {
+        statistics.global_attempted += 1;
+        if accept(model.global_flip_delta(lattice), rng) {
+            lattice.flip_all();
+            statistics.global_accepted += 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mc::Couplings;
+    use crate::physics::Noise;
+
+    #[test]
+    fn tnmc_adds_lazy_always_accepted_global_flips_for_exact_symmetries() {
+        let couplings = Couplings::new(0.3, 0.7).expect("valid couplings");
+        let models = [
+            Model::clean(2, 2, couplings).expect("valid clean model"),
+            Model::posterior(2, 2, couplings, Noise::Zz, vec![0.4, -0.8]).expect("valid ZZ model"),
+        ];
+
+        for (case, model) in models.iter().enumerate() {
+            let mut lattice = Lattice::new(2, 2, vec![1; 4]).expect("valid lattice");
+            let mut rng = Rng64::seeded(0x6c61_7a79 + case as u64);
+            let mut statistics = UpdateStats::default();
+            for _ in 0..2_000 {
+                Update::Tnmc {
+                    maximum_bond_dimension: 2,
+                }
+                .apply(model, &mut lattice, &mut rng, &mut statistics)
+                .expect("valid TNMC update");
+            }
+
+            assert_eq!(statistics.sweeps, 2_000);
+            assert_eq!(statistics.tnmc_proposed, 2_000);
+            assert_eq!(statistics.global_proposed, 2_000);
+            assert_eq!(statistics.global_accepted, statistics.global_attempted);
+            assert!((900..=1_100).contains(&statistics.global_attempted));
+        }
+    }
+
+    #[test]
+    fn lazy_global_flip_uses_the_exact_metropolis_probability_for_z_fields() {
+        let couplings = Couplings::new(0.3, 0.7).expect("valid couplings");
+        let field = std::f64::consts::LN_2 / 4.0;
+        let model =
+            Model::posterior(2, 2, couplings, Noise::Z, vec![field; 2]).expect("valid Z model");
+        let initial = Lattice::new(2, 2, vec![1; 4]).expect("valid lattice");
+        assert!((model.global_flip_delta(&initial) - std::f64::consts::LN_2).abs() < 1.0e-12);
+
+        let trials = 100_000;
+        let mut rng = Rng64::seeded(0x5a66_1e1d);
+        let mut statistics = UpdateStats::default();
+        for _ in 0..trials {
+            let mut lattice = initial.clone();
+            lazy_global_flip(&model, &mut lattice, &mut rng, &mut statistics);
+        }
+
+        assert_eq!(statistics.global_proposed, trials);
+        let attempt_fraction = statistics.global_attempted as f64 / trials as f64;
+        let acceptance = statistics.global_accepted as f64 / statistics.global_attempted as f64;
+        assert!((attempt_fraction - 0.5).abs() < 0.01);
+        assert!((acceptance - 0.5).abs() < 0.01);
+    }
 }
