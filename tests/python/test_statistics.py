@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -61,6 +63,10 @@ def test_split_rhat() -> None:
     assert split_rhat(chains) < 1.01
 
 
+def test_split_rhat_rejects_identical_constant_chains() -> None:
+    assert math.isinf(split_rhat(np.ones((4, 64))))
+
+
 def test_common_resample_immse_constant_q() -> None:
     gamma = np.linspace(0.0, 2.0, 9)
     overlaps = np.full((32, gamma.size), 0.25)
@@ -69,4 +75,3 @@ def test_common_resample_immse_constant_q() -> None:
     )
     np.testing.assert_allclose(estimate.information_per_site, 0.5 * gamma * 0.75)
     np.testing.assert_allclose(estimate.quadrature_systematic, 0.0, atol=1e-14)
-

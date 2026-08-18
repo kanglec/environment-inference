@@ -12,11 +12,17 @@ These suggestions summarize local benchmarks completed on 2026-08-13 and
 - TNMC bond dimensions `chi = 1, 2, 4, 8`, with a light `chi = 16` timing
   pilot.
 
-Clean benchmarks after commit `c281b93` include the lazy global-spin-flip
-Metropolis substep now composed with every TNMC sweep. Disordered benchmarks
-were collected before that change. Their bond-dimension and cost evidence
-remains useful, but their decorrelation-gap results must be rechecked before a
-new disordered production campaign.
+Clean benchmarks after commit `c281b93` used the composite now named
+`tnmc-global`, which includes a lazy global-spin-flip Metropolis substep.
+Disordered benchmarks were collected with the pure kernel now named `tnmc`.
+Their bond-dimension and cost evidence remains useful, but the two methods must
+not be compared or reported under one label, and their decorrelation-gap results
+must be rechecked before a new disordered production campaign.
+
+Pre-split artifacts whose `update` field says `tnmc` may contain the old
+composite kernel. They must remain under their original source digest and must
+not be merged with new `tnmc` data. The maintained presets use new campaign
+names and output roots so this provenance boundary is explicit.
 
 ## Recommended starting point
 
@@ -24,7 +30,7 @@ For the tested size range, start with:
 
 ```toml
 [mc]
-updates = ["tnmc"]
+updates = ["tnmc-global"] # use "tnmc" for the pure reference kernel
 posterior_decorrelation_gap = 1 # clean p=0 only; rebenchmark for disorder
 inner_measurements = 64
 inner_saving_interval = 8
@@ -72,16 +78,16 @@ throughput. Do not increase `chi` solely to obtain nearly perfect acceptance.
 All tested runs had zero TNMC positivity regularizations. Any nonzero
 regularization count must be reported and investigated before production.
 
-## Clean model after lazy global flips
+## Clean `tnmc-global` model after lazy global flips
 
-Each TNMC sweep now ends with a global flip proposed with probability one half.
+Each `tnmc-global` sweep ends with a global flip proposed with probability one half.
 The flip
 
 - always accepts in the clean and ZZ models, where it is an exact symmetry;
 - uses the exact Metropolis probability for Z disorder;
 - has negligible measured cost.
 
-For clean `chi = 2`, the after-change size grid found:
+For clean `tnmc-global` at `chi = 2`, the after-change size grid found:
 
 | Lx | Sweeps/s | TNMC acceptance | tau energy | tau spin overlap | tau bond overlap |
 |---:|---:|---:|---:|---:|---:|
@@ -95,7 +101,7 @@ R-hat across the relevant clean energy, spin-overlap, and bond-overlap checks
 was 1.039. Before the global move, spin-overlap split R-hat at `32 x 64`
 remained 1.129 even after 2048 preliminary sweeps.
 
-For clean `p = 0`, use `posterior_decorrelation_gap = 1` with the current API.
+For clean `p = 0`, use `posterior_decorrelation_gap = 1` with `tnmc-global`.
 The planted configuration is already an exact posterior draw, so this is not a
 thermalization budget. The one update executes the exact global-sector
 randomization; the saving interval supplies another eight updates before the
@@ -113,10 +119,12 @@ maximize effective samples per compute time when downstream uncertainty
 analysis retains autocorrelation. The interval of eight is instead intended to
 make a fixed finite inner budget nearly independent and easier to diagnose.
 
-The planted configuration is used as one posterior replica in the default
-Nishimori estimators for `q_ea_planted`, posterior correlators, and I--MMSE.
-Consequently, the inner chain must be sufficiently separated from that planted
-draw even though it starts in the correct marginal distribution.
+The planted configuration initializes the production estimator and is used as
+the independent posterior replica in the default Nishimori estimators for
+`q_ea_planted`, posterior correlators, and I--MMSE. Consequently, that inner
+chain must be sufficiently separated from the planted draw even though it
+starts in the correct marginal distribution. Separate overdispersed chains,
+not duplicated planted starts, supply split-R-hat evidence.
 
 ## Disordered decorrelation gap
 
@@ -148,7 +156,7 @@ representative full check is:
 ```bash
 dcft benchmark updates \
   --config REQUEST_CONFIG \
-  --update tnmc \
+  --update tnmc-global \
   --workers 4 \
   --speed-sweeps 256 \
   --probes 512 \
@@ -169,7 +177,7 @@ Require all of the following before promotion:
 - stable integrated autocorrelation estimates from traces long relative to
   their autocorrelation window;
 - high effective samples per wall time relative to other `chi` choices;
-- adequate TNMC and global-flip acceptance;
+- adequate TNMC acceptance and, for `tnmc-global`, global-flip acceptance;
 - zero, or explicitly explained, positivity regularizations;
 - stable conclusions over representative disorder records;
 - timing on the actual production machine.
@@ -187,8 +195,9 @@ reusable preset.
 - Timings are specific to the benchmark machine and four-worker shape.
 - The maximum tested lattice was `32 x 64`.
 - Only heterodyne records were benchmarked.
-- The clean after-change result is validated; disordered gaps are pre-change
-  evidence and must be retested.
+- The clean `tnmc-global` result is validated; disordered `tnmc` gaps are
+  pre-composite evidence and must be retested for whichever named kernel will
+  be used.
 - The benchmark's overdispersed split R-hat is stricter than ordinary burn-in
   from the exact planted posterior draw, but it remains useful for detecting
   hidden sector failures.

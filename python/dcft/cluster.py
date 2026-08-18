@@ -178,7 +178,7 @@ test -f "$PROJECT_ROOT/uv.lock"
 test -f "$PROJECT_ROOT/Cargo.lock"
 test -x "$PROJECT_ROOT/.venv/bin/dcft"
 command -v sbatch
-"$PROJECT_ROOT/.venv/bin/python" -c 'from dcft import _core; assert "tnmc" in _core.update_registry()'
+"$PROJECT_ROOT/.venv/bin/python" -c 'from dcft import _core; assert {"tnmc", "tnmc-global"} <= set(_core.update_registry())'
 echo "DCFT checkout and Slurm client are ready."
 """
     )

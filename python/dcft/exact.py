@@ -345,6 +345,22 @@ def _aggregate_posterior(
     return float(np.mean(means)), float(np.mean(np.abs(means))), float(np.mean(planted))
 
 
+def _local_x_likelihood(
+    variables: FloatArray,
+    outcome: FloatArray,
+    error_probability: float,
+) -> FloatArray:
+    """Evaluate the binary channel without forming ``1 - kappa``.
+
+    ``kappa`` rounds to one before the mismatch probability vanishes when
+    ``p`` approaches one half.  Matching and mismatching sites therefore use
+    the directly computed channel probabilities.
+    """
+    matches = variables * outcome[None, :] > 0.0
+    site_probabilities = np.where(matches, 1.0 - error_probability, error_probability)
+    return np.asarray(np.prod(site_probabilities, axis=1), dtype=np.float64)
+
+
 def _gaussian_records(
     *,
     sites: int,
@@ -414,12 +430,11 @@ def _local_x_enumerated_records(
     spec: ObservableSpec,
 ) -> list[dict[str, Any]]:
     parameters = _core.protocol_parameters("local-x", p)
-    kappa = float(parameters["kappa"])
-    coupling = float(parameters["coupling"])
+    error_probability = float(parameters["error_probability"])
     rows: list[dict[str, Any]] = []
     for outcome_bits in range(1 << sites):
         outcome = np.asarray(_basis_spins(outcome_bits, sites), dtype=np.float64)
-        likelihood = np.prod((1.0 + kappa * variables * outcome[None, :]) / 2.0, axis=1)
+        likelihood = _local_x_likelihood(variables, outcome, error_probability)
         evidence = float(prior @ likelihood)
         if evidence <= 0.0:
             continue
@@ -445,14 +460,11 @@ def _local_x_enumerated_records(
                 "planted_contribution": planted,
                 "record_weight": evidence,
                 "record_mode": "enumerated-binary",
-                "_coupling": coupling,
             }
         )
     total = sum(float(row["record_weight"]) for row in rows)
     if not math.isclose(total, 1.0, rel_tol=0.0, abs_tol=5e-12):
         raise RuntimeError(f"local-X evidence does not normalize: {total}")
-    for row in rows:
-        row.pop("_coupling")
     return rows
 
 

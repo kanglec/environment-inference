@@ -197,7 +197,9 @@ def split_rhat(chains: npt.ArrayLike) -> float:
     between = length * float(np.var(chain_means, ddof=1))
     within = float(np.mean(np.var(split, axis=1, ddof=1)))
     if within == 0.0:
-        return 1.0 if between == 0.0 else math.inf
+        # Identical constant chains contain no evidence of mixing.  Reporting
+        # one here would make a completely frozen kernel look converged.
+        return math.inf
     marginal = (length - 1.0) / length * within + between / length
     return math.sqrt(marginal / within)
 

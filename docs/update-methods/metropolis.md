@@ -156,9 +156,9 @@ clean Z and spin-sector-sensitive work.
 For the older disordered TNMC results, planted-overlap effective-sample rates
 were about 68--204/s. Metropolis is slower for Z `p = 0.05` at 7--13/s, but
 faster at the tested Z `p = 0.25, 0.48` and ZZ points, often by large factors.
-The older TNMC weak-Z overdispersed check failed even after long gaps, whereas
+The older pure-`tnmc` weak-Z overdispersed check failed even after long gaps, whereas
 the present Metropolis 16384/8192 setting passed three records. TNMC's
-disordered gap results predate its lazy global-flip substep and must be rerun
+disordered gap results predate the explicitly named `tnmc-global` method and must be rerun
 before making a current head-to-head convergence claim.
 
 Acceptance is not a method-selection criterion by itself. Select by effective

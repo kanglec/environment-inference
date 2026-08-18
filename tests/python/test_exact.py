@@ -7,6 +7,7 @@ import pytest
 
 from dcft.exact import (
     ObservableSpec,
+    _local_x_likelihood,
     build_priors,
     decohered_density_matrix,
     density_diagnostics,
@@ -117,6 +118,22 @@ def test_planted_local_x_conditional_law_equals_posterior() -> None:
         conditional_from_joint = prior * likelihood / float(prior @ likelihood)
         posterior = posterior_probabilities(prior, variables, coupling * z)
         np.testing.assert_allclose(conditional_from_joint, posterior, atol=2e-15)
+
+
+def test_local_x_exact_likelihood_keeps_endpoint_mismatches() -> None:
+    from dcft import _core
+
+    parameters = _core.protocol_parameters("local-x", 0.499_999_999_999)
+    error_probability = float(parameters["error_probability"])
+    variables = np.asarray([[1.0, 1.0], [-1.0, 1.0]])
+    likelihood = _local_x_likelihood(
+        variables,
+        np.asarray([1.0, 1.0]),
+        error_probability,
+    )
+    assert likelihood[0] == pytest.approx((1.0 - error_probability) ** 2)
+    assert likelihood[1] > 0.0
+    assert likelihood[1] == pytest.approx(error_probability * (1.0 - error_probability))
 
 
 @pytest.mark.parametrize(

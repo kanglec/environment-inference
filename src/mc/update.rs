@@ -10,6 +10,7 @@ pub enum Update {
     MetropolisGlobal,
     CorrectedWolff,
     Tnmc { maximum_bond_dimension: usize },
+    TnmcGlobal { maximum_bond_dimension: usize },
 }
 
 impl Update {
@@ -26,14 +27,22 @@ impl Update {
             "sequential-metropolis" => Ok(Self::SequentialMetropolis),
             "metropolis-global" => Ok(Self::MetropolisGlobal),
             "corrected-wolff" => Ok(Self::CorrectedWolff),
-            "tnmc" if maximum_bond_dimension > 0 => Ok(Self::Tnmc {
-                maximum_bond_dimension,
-            }),
-            "tnmc" => Err(DcftError::invalid(
+            "tnmc" | "tnmc-global" if maximum_bond_dimension > 0 => {
+                if name == "tnmc" {
+                    Ok(Self::Tnmc {
+                        maximum_bond_dimension,
+                    })
+                } else {
+                    Ok(Self::TnmcGlobal {
+                        maximum_bond_dimension,
+                    })
+                }
+            }
+            "tnmc" | "tnmc-global" => Err(DcftError::invalid(
                 "TNMC maximum bond dimension must be positive",
             )),
             _ => Err(DcftError::invalid(
-                "unknown update; expected metropolis, sequential-metropolis, metropolis-global, corrected-wolff, or tnmc",
+                "unknown update; expected metropolis, sequential-metropolis, metropolis-global, corrected-wolff, tnmc, or tnmc-global",
             )),
         }
     }
@@ -46,6 +55,7 @@ impl Update {
             Self::MetropolisGlobal => "metropolis-global",
             Self::CorrectedWolff => "corrected-wolff",
             Self::Tnmc { .. } => "tnmc",
+            Self::TnmcGlobal { .. } => "tnmc-global",
         }
     }
 
@@ -69,6 +79,9 @@ impl Update {
             }
             Self::CorrectedWolff => corrected_wolff(model, lattice, rng, statistics),
             Self::Tnmc {
+                maximum_bond_dimension,
+            } => super::tnmc::update(model, lattice, rng, statistics, maximum_bond_dimension),
+            Self::TnmcGlobal {
                 maximum_bond_dimension,
             } => {
                 super::tnmc::update(model, lattice, rng, statistics, maximum_bond_dimension)?;
@@ -228,7 +241,43 @@ mod tests {
     use crate::physics::Noise;
 
     #[test]
-    fn tnmc_adds_lazy_always_accepted_global_flips_for_exact_symmetries() {
+    fn tnmc_names_distinguish_pure_and_composite_kernels() {
+        assert!(matches!(
+            Update::parse_with_tnmc_bond_dimension("tnmc", 3).expect("pure TNMC"),
+            Update::Tnmc {
+                maximum_bond_dimension: 3
+            }
+        ));
+        assert!(matches!(
+            Update::parse_with_tnmc_bond_dimension("tnmc-global", 3).expect("composite TNMC"),
+            Update::TnmcGlobal {
+                maximum_bond_dimension: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn pure_tnmc_does_not_add_a_global_flip() {
+        let couplings = Couplings::new(0.3, 0.7).expect("valid couplings");
+        let model = Model::clean(2, 2, couplings).expect("valid clean model");
+        let mut lattice = Lattice::new(2, 2, vec![1; 4]).expect("valid lattice");
+        let mut rng = Rng64::seeded(0x7075_7265);
+        let mut statistics = UpdateStats::default();
+        for _ in 0..100 {
+            Update::Tnmc {
+                maximum_bond_dimension: 2,
+            }
+            .apply(&model, &mut lattice, &mut rng, &mut statistics)
+            .expect("valid TNMC update");
+        }
+
+        assert_eq!(statistics.sweeps, 100);
+        assert_eq!(statistics.tnmc_proposed, 100);
+        assert_eq!(statistics.global_proposed, 0);
+    }
+
+    #[test]
+    fn tnmc_global_adds_lazy_always_accepted_flips_for_exact_symmetries() {
         let couplings = Couplings::new(0.3, 0.7).expect("valid couplings");
         let models = [
             Model::clean(2, 2, couplings).expect("valid clean model"),
@@ -240,7 +289,7 @@ mod tests {
             let mut rng = Rng64::seeded(0x6c61_7a79 + case as u64);
             let mut statistics = UpdateStats::default();
             for _ in 0..2_000 {
-                Update::Tnmc {
+                Update::TnmcGlobal {
                     maximum_bond_dimension: 2,
                 }
                 .apply(model, &mut lattice, &mut rng, &mut statistics)

@@ -117,6 +117,7 @@ def _sort_table(table: pa.Table) -> pa.Table:
             "observable",
             "separation",
             "update",
+            "chain_role",
             "inner_budget_multiplier",
             "replica",
         )
@@ -226,7 +227,11 @@ def write_artifact(
         if "global_id" in normalized.column_names:
             global_ids = [int(value) for value in normalized["global_id"].to_pylist()]
         config_hashes: list[str] = []
-        for column in ("configuration_hash", "planted_configuration_hash"):
+        for column in (
+            "configuration_hash",
+            "planted_configuration_hash",
+            "initial_configuration_hash",
+        ):
             if column in normalized.column_names:
                 config_hashes.extend(str(value) for value in normalized[column].to_pylist())
         rng_algorithm, key_version = _core.rng_contract()

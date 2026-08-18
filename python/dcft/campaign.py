@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -116,14 +117,70 @@ def _execute_clean(config: CampaignConfig, task: Task) -> tuple[str, ...]:
     return (artifact.artifact_id,)
 
 
-def _diagnostic_schedule(config: CampaignConfig, global_id: int) -> tuple[tuple[int, int], ...]:
+@dataclass(frozen=True)
+class _ChainSpec:
+    multiplier: int
+    replica: int
+    role: str
+    initialization: str
+
+
+def _chain_schedule(config: CampaignConfig, global_id: int) -> tuple[_ChainSpec, ...]:
+    """Separate estimator, finite-budget, and overdispersed convergence chains."""
+    production = _ChainSpec(1, 0, "production", "planted")
     if global_id >= config.mc.diagnostic_outer_records:
-        return ((1, 0),)
-    return tuple(
-        (multiplier, replica)
+        return (production,)
+    finite_inner = tuple(
+        _ChainSpec(multiplier, replica, "finite-inner", "planted")
         for multiplier in config.mc.inner_budget_multipliers
+        for replica in range(1 if multiplier == 1 else 0, config.mc.replicated_chains)
+    )
+    convergence = tuple(
+        _ChainSpec(
+            1,
+            replica,
+            "convergence",
+            "all-plus" if replica == 0 else "all-minus" if replica == 1 else "random",
+        )
         for replica in range(config.mc.replicated_chains)
     )
+    return (production, *finite_inner, *convergence)
+
+
+def _packed_initial_configuration(
+    lx: int,
+    lt: int,
+    initialization: str,
+    *,
+    seed: int,
+    global_id: int,
+    stream_label: str,
+    planted: bytes,
+) -> bytes:
+    count = lx * lt
+    byte_count = (count + 7) // 8
+    if initialization == "planted":
+        return planted
+    if initialization == "all-plus":
+        return bytes(byte_count)
+    if initialization == "all-minus":
+        packed = bytearray([0xFF] * byte_count)
+        if count % 8:
+            packed[-1] &= (1 << (count % 8)) - 1
+        return bytes(packed)
+    if initialization != "random":
+        raise CampaignError(f"unknown posterior initialization {initialization!r}")
+    uniforms = _core.stream_uniforms(
+        seed,
+        f"posterior-initial/{stream_label}",
+        global_id,
+        count,
+    )
+    packed = bytearray(byte_count)
+    for index, uniform in enumerate(uniforms):
+        if float(uniform) < 0.5:
+            packed[index // 8] |= 1 << (index % 8)
+    return bytes(packed)
 
 
 def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[str, ...]:
@@ -175,11 +232,21 @@ def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[st
         )
         planted_variables = [int(value) for value in generated["variables"]]
         planted_bond = [boundary[x] * boundary[(x + 1) % lx] for x in range(lx)]
-        for multiplier, replica in _diagnostic_schedule(config, global_id):
-            measurements = config.mc.inner_measurements * multiplier
+        for chain in _chain_schedule(config, global_id):
+            measurements = config.mc.inner_measurements * chain.multiplier
             stream_label = (
                 f"{noise}/{protocol_id}/p={p:.17g}/{update}/chi={tnmc_bond_dimension}/"
-                f"budget={multiplier}/replica={replica}"
+                f"role={chain.role}/budget={chain.multiplier}/replica={chain.replica}/"
+                f"initialization={chain.initialization}"
+            )
+            initial = _packed_initial_configuration(
+                lx,
+                lt,
+                chain.initialization,
+                seed=config.campaign.seed,
+                global_id=global_id,
+                stream_label=stream_label,
+                planted=packed,
             )
             prepared.append(
                 {
@@ -190,11 +257,15 @@ def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[st
                     "planted_bond": planted_bond,
                     "generated": generated,
                     "planted_variables": planted_variables,
-                    "multiplier": multiplier,
-                    "replica": replica,
+                    "initial": list(initial),
+                    "initial_hash": configuration_hash(initial),
+                    "multiplier": chain.multiplier,
+                    "replica": chain.replica,
+                    "chain_role": chain.role,
+                    "initialization": chain.initialization,
                     "measurements": measurements,
                     "stream_label": stream_label,
-                    "retain_trace": global_id < config.mc.diagnostic_outer_records,
+                    "retain_trace": chain.role == "convergence",
                 }
             )
     if not prepared:
@@ -208,6 +279,7 @@ def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[st
         noise,
         [list(item["generated"]["record_couplings"]) for item in prepared],
         [cast(list[int], item["packed"]) for item in prepared],
+        [cast(list[int], item["initial"]) for item in prepared],
         update,
         config.campaign.seed,
         [int(item["global_id"]) for item in prepared],
@@ -256,6 +328,9 @@ def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[st
                 "kappa": parameters["kappa"],
                 "protocol_coupling": parameters["coupling"],
                 "planted_configuration_hash": str(item["expected_hash"]),
+                "initial_configuration_hash": str(item["initial_hash"]),
+                "chain_role": str(item["chain_role"]),
+                "initialization": str(item["initialization"]),
                 "planted_variables": cast(list[int], item["planted_variables"]),
                 "raw_record": [float(value) for value in generated["raw_record"]],
                 "record_couplings": [float(value) for value in generated["record_couplings"]],
@@ -335,9 +410,16 @@ def _execute_mc(config: CampaignConfig, task: Task, *, workers: int) -> tuple[st
                 "metropolis-global": "random Metropolis sweep plus lazy global proposal",
                 "corrected-wolff": "one clean-cluster proposal including rejection",
                 "tnmc": "one random frozen-row/frozen-column conditional TNMC proposal",
+                "tnmc-global": (
+                    "one conditional TNMC proposal followed by one lazy global proposal"
+                ),
             }[update],
             "tnmc_bond_dimension": tnmc_bond_dimension,
-            "posterior_initialization": "full planted clean state (exact posterior draw)",
+            "posterior_initialization": {
+                "production": "full planted clean state (exact posterior draw)",
+                "finite-inner": "full planted clean state with independent streams",
+                "convergence": "overdispersed all-plus, all-minus, then random states",
+            },
             "ordinary_burn_in": 0,
             "decorrelation_gap": config.mc.posterior_decorrelation_gap,
             "inner_budget_multipliers": list(config.mc.inner_budget_multipliers),
@@ -369,6 +451,7 @@ def _execute_merge(config: CampaignConfig, task: Task) -> tuple[str, ...]:
     table = table.sort_by(
         [
             ("global_id", "ascending"),
+            ("chain_role", "ascending"),
             ("inner_budget_multiplier", "ascending"),
             ("replica", "ascending"),
         ]
@@ -376,7 +459,7 @@ def _execute_merge(config: CampaignConfig, task: Task) -> tuple[str, ...]:
     production_ids = [
         int(row["global_id"])
         for row in table.to_pylist()
-        if int(row["inner_budget_multiplier"]) == 1 and int(row["replica"]) == 0
+        if row["chain_role"] == "production"
     ]
     expected_ids = list(
         range(

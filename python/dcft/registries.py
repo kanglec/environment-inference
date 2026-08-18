@@ -15,6 +15,7 @@ UPDATES: Final[tuple[str, ...]] = (
     "metropolis-global",
     "corrected-wolff",
     "tnmc",
+    "tnmc-global",
 )
 OBSERVABLES: Final[tuple[str, ...]] = (
     "energy",

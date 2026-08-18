@@ -44,6 +44,7 @@ fn update_registry() -> Vec<&'static str> {
         "metropolis-global",
         "corrected-wolff",
         "tnmc",
+        "tnmc-global",
     ]
 }
 
@@ -244,6 +245,7 @@ fn posterior_observables(
     noise: &str,
     record_couplings: Vec<f64>,
     planted_configuration: Vec<u8>,
+    initial_configuration: Vec<u8>,
     update: &str,
     seed: u64,
     global_id: u64,
@@ -266,6 +268,7 @@ fn posterior_observables(
         noise,
         record_couplings,
         &planted_configuration,
+        &initial_configuration,
         update,
         seed,
         global_id,
@@ -351,6 +354,7 @@ fn posterior_observables_batch(
     noise: &str,
     record_couplings: Vec<Vec<f64>>,
     planted_configurations: Vec<Vec<u8>>,
+    initial_configurations: Vec<Vec<u8>>,
     update: &str,
     seed: u64,
     global_ids: Vec<u64>,
@@ -367,6 +371,7 @@ fn posterior_observables_batch(
     if count == 0
         || [
             planted_configurations.len(),
+            initial_configurations.len(),
             global_ids.len(),
             stream_labels.len(),
             measurements.len(),
@@ -386,15 +391,20 @@ fn posterior_observables_batch(
     let jobs = record_couplings
         .into_iter()
         .zip(planted_configurations)
+        .zip(initial_configurations)
         .zip(global_ids)
         .zip(stream_labels)
         .zip(measurements)
         .zip(retain_traces)
         .map(
-            |(((((record, planted), global_id), stream_label), measurements), retain_trace)| {
+            |(
+                (((((record, planted), initial), global_id), stream_label), measurements),
+                retain_trace,
+            )| {
                 mc::PosteriorJob {
                     record_couplings: record,
                     planted_configuration: planted,
+                    initial_configuration: initial,
                     global_id,
                     stream_label,
                     measurements,

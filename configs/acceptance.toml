@@ -1,12 +1,12 @@
 schema_version = 2
 
 [campaign]
-name = "acceptance-L4-L6-L8"
+name = "acceptance-L4-L6-L8-diagnostics-v2"
 preset = "comparison"
 seed = 11160318154034397263
-output_root = "../artifacts/acceptance"
+output_root = "../artifacts/acceptance-diagnostics-v2"
 project_root = ".."
-scratch_root = "../scratch/acceptance"
+scratch_root = "../scratch/acceptance-diagnostics-v2"
 
 [lattice]
 sizes = [4, 6, 8]
@@ -28,7 +28,7 @@ clean_saving_interval = 30
 posterior_decorrelation_gap = 100
 inner_measurements = 128
 inner_saving_interval = 4
-updates = ["corrected-wolff", "tnmc"]
+updates = ["corrected-wolff", "tnmc-global"]
 separations = "all"
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 8

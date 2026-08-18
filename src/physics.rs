@@ -88,15 +88,25 @@ impl ProtocolParameters {
                 Ok(Self::gaussian(p, lambda, gamma))
             }
             Measurement::LocalX => {
-                let kappa = 2.0 * (p * (1.0 - p)).sqrt();
-                let coupling = kappa.atanh();
+                // The direct forms ``(1-kappa)/2`` and ``atanh(kappa)`` lose
+                // all mismatch probability when p approaches 1/2.  Express
+                // the two quantities through the channel amplitudes instead.
+                let correct_amplitude = (1.0 - p).sqrt();
+                let error_amplitude = p.sqrt();
+                let amplitude_difference = correct_amplitude - error_amplitude;
+                let error_probability = 0.5 * amplitude_difference * amplitude_difference;
+                let coupling = ((correct_amplitude + error_amplitude) / amplitude_difference).ln();
+                let kappa = 2.0 * correct_amplitude * error_amplitude;
+                require_finite("local-X error probability", error_probability)?;
+                require_finite("local-X coupling", coupling)?;
+                require_finite("local-X kappa", kappa)?;
                 Ok(Self {
                     p,
                     lambda,
                     gamma: None,
                     kappa: Some(kappa),
                     coupling: Some(coupling),
-                    error_probability: Some((1.0 - kappa) / 2.0),
+                    error_probability: Some(error_probability),
                 })
             }
         }
@@ -290,5 +300,18 @@ mod tests {
     fn records_have_correct_zero_strength_limit() {
         let record = gaussian_record(&[1, -1], 0.0, &[2.0, -3.0]).expect("valid");
         assert_eq!(record, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn local_x_parameters_remain_finite_near_the_projective_endpoint() {
+        let p = 0.499_999_999_999;
+        let parameters = ProtocolParameters::new(Measurement::LocalX, p).expect("valid p");
+        let mismatch = parameters.error_probability.expect("mismatch probability");
+        let coupling = parameters.coupling.expect("local-X coupling");
+        assert!(mismatch > 0.0 && mismatch < 1.0e-20);
+        assert!(coupling.is_finite() && coupling > 20.0);
+        let (_outcomes, fields) =
+            local_x_record(&[1, -1], parameters, &[0.25, 0.75]).expect("finite record");
+        assert!(fields.iter().all(|field| field.is_finite()));
     }
 }

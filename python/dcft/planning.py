@@ -89,7 +89,9 @@ def build_plan(config: CampaignConfig) -> Plan:
                                 "gamma": point.gamma,
                                 "update": update,
                                 "tnmc_bond_dimension": (
-                                    config.mc.tnmc_bond_dimension if update == "tnmc" else None
+                                    config.mc.tnmc_bond_dimension
+                                    if update in {"tnmc", "tnmc-global"}
+                                    else None
                                 ),
                             }
                             chunks = [

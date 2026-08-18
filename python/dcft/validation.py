@@ -145,41 +145,6 @@ def _ed_checks(config: CampaignConfig, rows: list[dict[str, Any]]) -> list[Check
         if index > 100_000:
             raise RuntimeError("unexpectedly large ED result table")
 
-    indexed = {
-        (
-            row["lx"],
-            row["noise"],
-            row["p"],
-            row["prior"],
-            row["observable"],
-            row["separation"],
-            row["measurement"],
-        ): row
-        for row in rows
-    }
-    base_keys = {key[:-1] for key in indexed if key[-1] in {"heterodyne", "homodyne"}}
-    for base in sorted(base_keys, key=repr):
-        heterodyne = indexed.get((*base, "heterodyne"))
-        homodyne = indexed.get((*base, "homodyne"))
-        if heterodyne is None or homodyne is None:
-            continue
-        difference = float(heterodyne["measurement_witness"]) - float(
-            homodyne["measurement_witness"]
-        )
-        uncertainty = 5.0 * math.hypot(
-            float(heterodyne["witness_standard_error"]),
-            float(homodyne["witness_standard_error"]),
-        )
-        checks.append(
-            Check(
-                "homodyne-ordering-exact",
-                repr(base),
-                difference,
-                uncertainty,
-                difference <= uncertainty + 1e-12,
-                "heterodyne witness minus homodyne witness",
-            )
-        )
     return checks
 
 
@@ -255,7 +220,28 @@ def _mc_checks(scalar_rows: list[dict[str, Any]], curve_rows: list[dict[str, Any
                 "planted q_EA versus finite-inner-chain square diagnostic; 0.05 bias envelope",
             )
         )
-        if row["update"] == "tnmc":
+        checks.append(
+            Check(
+                "outer-block-correlation-scale",
+                scope,
+                float(row["outer_block_length_used"]),
+                float(row["outer_minimum_correlation_block"]),
+                bool(row["outer_block_correlation_adequate"]),
+                "configured block length must cover twice the slowest clean-chain tau_int",
+            )
+        )
+        ratio = row.get("outer_block_standard_error_ratio")
+        checks.append(
+            Check(
+                "outer-block-stability",
+                scope,
+                None if ratio is None else float(ratio),
+                2.0,
+                bool(row.get("outer_block_stable", False)),
+                "standard errors must be stable from half to twice the configured block length",
+            )
+        )
+        if row["update"] in {"tnmc", "tnmc-global"}:
             regularized = int(row.get("tnmc_conditionals_regularized", 0))
             checks.append(
                 Check(
@@ -280,8 +266,272 @@ def _mc_checks(scalar_rows: list[dict[str, Any]], curve_rows: list[dict[str, Any
                 "posterior linear correlator versus clean prior",
             )
         )
+        bias = row.get("witness_inner_bias_envelope")
+        checks.append(
+            Check(
+                "finite-inner-witness-envelope",
+                f"L={row['lx']}/{row['noise']}/{row['protocol_id']}/{row['update']}/{row['family']}/r={row['separation']}",
+                None if bias is None else float(bias),
+                None,
+                bias is not None and math.isfinite(float(bias)),
+                "every nonlinear witness requires a bootstrapped 1x/2x/4x bias envelope",
+            )
+        )
+        if bias is not None:
+            bias_tolerance = max(5.0 * float(row["witness_standard_error"]), 0.05)
+            checks.append(
+                Check(
+                    "finite-inner-witness-bias",
+                    f"L={row['lx']}/{row['noise']}/{row['protocol_id']}/{row['update']}/{row['family']}/r={row['separation']}",
+                    float(bias),
+                    bias_tolerance,
+                    float(bias) <= bias_tolerance,
+                    "the conservative finite-inner envelope must be small relative to uncertainty",
+                )
+            )
 
-    indexed = {
+    return checks
+
+
+def _diagnostic_checks(
+    config: CampaignConfig,
+    scalar_rows: list[dict[str, Any]],
+    diagnostic_rows: list[dict[str, Any]],
+) -> list[Check]:
+    """Gate promotion on explicit overdispersed and finite-inner evidence."""
+    index = {
+        (
+            int(row["lx"]),
+            str(row["noise"]),
+            float(row["p"]),
+            str(row["measurement"]),
+            str(row["protocol_id"]),
+            str(row["update"]),
+            str(row["metric"]),
+        ): row
+        for row in diagnostic_rows
+    }
+    points = {
+        (
+            int(row["lx"]),
+            str(row["noise"]),
+            float(row["p"]),
+            str(row["measurement"]),
+            str(row["protocol_id"]),
+            str(row["update"]),
+        )
+        for row in scalar_rows
+    }
+    checks: list[Check] = []
+    for point in sorted(points, key=repr):
+        lx, noise, p, _measurement, protocol_id, update = point
+        scope = f"L={lx}/{noise}/p={p}/{protocol_id}/{update}"
+        required_metrics = ["energy"]
+        if noise == "z":
+            required_metrics.extend(("boundary_magnetization", "planted_spin_overlap"))
+        else:
+            required_metrics.append("planted_bond_overlap")
+        for metric in required_metrics:
+            row = index.get((*point, metric))
+            checks.append(
+                Check(
+                    "analysis-diagnostics-present",
+                    f"{scope}/{metric}",
+                    0.0 if row is not None else 1.0,
+                    0.0,
+                    row is not None,
+                    "every production point requires its relevant diagnostic summary",
+                )
+            )
+            if row is None:
+                continue
+            movement_detected = bool(row.get("movement_detected", False))
+            rhat_converged = bool(row.get("rhat_converged", False))
+            rhat_or_saturation_converged = rhat_converged or bool(
+                row.get("rhat_or_saturation_converged", False)
+            )
+            if metric == "energy":
+                diagnostic_converged = rhat_converged
+                movement_check = Check(
+                    "diagnostic-chain-movement",
+                    f"{scope}/{metric}",
+                    (
+                        None
+                        if row.get("minimum_trace_transitions") is None
+                        else float(row["minimum_trace_transitions"])
+                    ),
+                    1.0,
+                    movement_detected,
+                    "every retained energy trace must change at least once",
+                )
+            else:
+                diagnostic_converged = rhat_or_saturation_converged
+                movement_check = Check(
+                    "diagnostic-movement-or-saturation",
+                    f"{scope}/{metric}",
+                    (
+                        None
+                        if row.get("minimum_trace_transitions") is None
+                        else float(row["minimum_trace_transitions"])
+                    ),
+                    0.0,
+                    movement_detected or diagnostic_converged,
+                    "a discrete overlap may saturate when overdispersed chains "
+                    "have a finite passing split R-hat or every replica has "
+                    "the same exact constant; energy movement is checked "
+                    "separately",
+                )
+            checks.extend(
+                (
+                    Check(
+                        "replicated-chain-rhat",
+                        f"{scope}/{metric}",
+                        (
+                            None
+                            if row.get("maximum_split_rhat") is None
+                            else float(row["maximum_split_rhat"])
+                        ),
+                        1.01,
+                        diagnostic_converged,
+                        "overdispersed all-plus/all-minus/random chains require "
+                        "a passing split R-hat, except for identical exact "
+                        "saturation of a non-energy diagnostic",
+                    ),
+                    movement_check,
+                    Check(
+                        "diagnostic-trace-length",
+                        f"{scope}/{metric}",
+                        (
+                            None
+                            if row.get("minimum_trace_length") is None
+                            else float(row["minimum_trace_length"])
+                        ),
+                        16.0,
+                        int(row.get("minimum_trace_length") or 0) >= 16,
+                        "each convergence trace must retain at least sixteen measurements",
+                    ),
+                    Check(
+                        "diagnostic-record-completeness",
+                        f"{scope}/{metric}",
+                        float(row.get("diagnostic_outer_records", 0)),
+                        float(config.mc.diagnostic_outer_records),
+                        int(row.get("diagnostic_outer_records", 0))
+                        == config.mc.diagnostic_outer_records,
+                        "every configured diagnostic outer id must be represented",
+                    ),
+                    Check(
+                        "overdispersed-initializations",
+                        f"{scope}/{metric}",
+                        0.0
+                        if bool(row.get("overdispersed_initializations_complete", False))
+                        else 1.0,
+                        0.0,
+                        bool(row.get("overdispersed_initializations_complete", False)),
+                        "replicas must start all-plus, all-minus, then from deterministic random states",
+                    ),
+                    Check(
+                        "finite-inner-budget-consistency",
+                        f"{scope}/{metric}",
+                        (
+                            None
+                            if row.get("budget_bias_envelope") is None
+                            else float(row["budget_bias_envelope"])
+                        ),
+                        None,
+                        bool(row.get("budget_complete", False))
+                        and bool(row.get("budget_consistent", False)),
+                        "paired 1x and 2x estimates must agree statistically with the 4x budget",
+                    ),
+                    Check(
+                        "diagnostic-outer-block-evidence",
+                        f"{scope}/{metric}",
+                        float(row.get("budget_outer_records", 0)),
+                        float(2 * config.statistics.block_length),
+                        int(row.get("budget_outer_records", 0))
+                        >= 2 * config.statistics.block_length,
+                        "finite-inner bootstrap must contain at least two configured outer blocks",
+                    ),
+                )
+            )
+        for metric in ("spin_absolute_profile", "bond_absolute_profile"):
+            row = index.get((*point, metric))
+            checks.append(
+                Check(
+                    "analysis-diagnostics-present",
+                    f"{scope}/{metric}",
+                    0.0 if row is not None else 1.0,
+                    0.0,
+                    row is not None,
+                    "nonlinear production estimators require finite-inner diagnostics",
+                )
+            )
+            if row is None:
+                continue
+            bias = row.get("budget_bias_envelope")
+            symmetry_zero_profile = noise == "zz" and metric == "spin_absolute_profile"
+            if symmetry_zero_profile:
+                budget_check = Check(
+                    "finite-inner-symmetry-bias-recorded",
+                    f"{scope}/{metric}",
+                    None if bias is None else float(bias),
+                    None,
+                    bool(row.get("budget_complete", False))
+                    and bias is not None
+                    and math.isfinite(float(bias)),
+                    "the ZZ spin one-point function is symmetry-forbidden, so the "
+                    "positive finite-sample |m_z| bias must be recorded rather than "
+                    "required to agree across inner budgets",
+                )
+            else:
+                budget_check = Check(
+                    "finite-inner-budget-consistency",
+                    f"{scope}/{metric}",
+                    None if bias is None else float(bias),
+                    None,
+                    bool(row.get("budget_complete", False))
+                    and bool(row.get("budget_consistent", False)),
+                    "nonlinear 1x and 2x estimates must agree statistically with 4x",
+                )
+            checks.extend(
+                (
+                    budget_check,
+                    Check(
+                        "diagnostic-record-completeness",
+                        f"{scope}/{metric}",
+                        float(row.get("diagnostic_outer_records", 0)),
+                        float(config.mc.diagnostic_outer_records),
+                        int(row.get("diagnostic_outer_records", 0))
+                        == config.mc.diagnostic_outer_records,
+                        "every configured diagnostic outer id must be represented",
+                    ),
+                )
+            )
+    return checks
+
+
+def _protocol_difference_checks(
+    curve_rows: list[dict[str, Any]],
+    ed_rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> list[Check]:
+    checks: list[Check] = []
+    mc_measurements: dict[tuple[Any, ...], set[str]] = {}
+    for row in curve_rows:
+        key = (
+            row["lx"],
+            row["noise"],
+            row["p"],
+            row["update"],
+            row["family"],
+            row["separation"],
+        )
+        mc_measurements.setdefault(key, set()).add(str(row["measurement"]))
+    expected_mc = {
+        key
+        for key, measurements in mc_measurements.items()
+        if {"heterodyne", "homodyne"} <= measurements
+    }
+    available_mc = {
         (
             row["lx"],
             row["noise"],
@@ -289,29 +539,79 @@ def _mc_checks(scalar_rows: list[dict[str, Any]], curve_rows: list[dict[str, Any
             row["update"],
             row["family"],
             row["separation"],
-            row["measurement"],
-        ): row
-        for row in curve_rows
+        )
+        for row in rows
+        if row["source"] == "mc"
     }
-    bases = {key[:-1] for key in indexed if key[-1] in {"heterodyne", "homodyne"}}
-    for base in sorted(bases, key=repr):
-        heterodyne = indexed.get((*base, "heterodyne"))
-        homodyne = indexed.get((*base, "homodyne"))
-        if heterodyne is None or homodyne is None:
+    for key in sorted(expected_mc, key=repr):
+        checks.append(
+            Check(
+                "paired-protocol-differences-present",
+                f"mc/{key!r}",
+                0.0 if key in available_mc else 1.0,
+                0.0,
+                key in available_mc,
+                "every paired MC curve point requires a common-resample difference",
+            )
+        )
+
+    ed_measurements: dict[tuple[Any, ...], set[str]] = {}
+    for row in ed_rows:
+        if row["observable"] not in {"spin-pair", "bond-pair"}:
             continue
-        difference = float(heterodyne["witness"]) - float(homodyne["witness"])
-        tolerance = 5.0 * math.hypot(
-            float(heterodyne["witness_standard_error"]),
-            float(homodyne["witness_standard_error"]),
+        key = (
+            row["lx"],
+            row["noise"],
+            row["p"],
+            row["prior"],
+            str(row["observable"]).removesuffix("-pair"),
+            row["separation"],
+        )
+        ed_measurements.setdefault(key, set()).add(str(row["measurement"]))
+    expected_ed = {
+        key
+        for key, measurements in ed_measurements.items()
+        if {"heterodyne", "homodyne"} <= measurements
+    }
+    available_ed = {
+        (
+            row["lx"],
+            row["noise"],
+            row["p"],
+            row["prior"],
+            row["family"],
+            row["separation"],
+        )
+        for row in rows
+        if row["source"] == "ed"
+    }
+    for key in sorted(expected_ed, key=repr):
+        checks.append(
+            Check(
+                "paired-protocol-differences-present",
+                f"ed/{key!r}",
+                0.0 if key in available_ed else 1.0,
+                0.0,
+                key in available_ed,
+                "every sampled ED curve point requires a common-random-number difference",
+            )
+        )
+    numerical_tolerance = 64.0 * math.ulp(1.0)
+    for row in rows:
+        upper = float(row["difference_simultaneous_upper"])
+        source = str(row["source"])
+        scope = (
+            f"{source}/L={row['lx']}/{row['noise']}/p={row['p']}/"
+            f"{row.get('prior') or row.get('update')}/{row['family']}/r={row['separation']}"
         )
         checks.append(
             Check(
-                "homodyne-ordering-mc",
-                repr(base),
-                difference,
-                tolerance,
-                difference <= tolerance,
-                "paired outer-id ordering with conservative combined uncertainty",
+                f"homodyne-ordering-{source}",
+                scope,
+                float(row["difference"]),
+                max(0.0, -float(row["difference_simultaneous_lower"])),
+                upper >= -numerical_tolerance,
+                "a resolved negative homodyne-minus-heterodyne simultaneous band is forbidden",
             )
         )
     return checks
@@ -445,6 +745,15 @@ def validate_campaign(
     scalar_rows = _tables(config, "analysis-scalars")
     curve_rows = _tables(config, "analysis-curves")
     checks.extend(_mc_checks(scalar_rows, curve_rows))
+    diagnostic_rows = _tables(config, "analysis-diagnostics")
+    checks.extend(_diagnostic_checks(config, scalar_rows, diagnostic_rows))
+    checks.extend(
+        _protocol_difference_checks(
+            curve_rows,
+            ed_rows,
+            _tables(config, "analysis-protocol-differences"),
+        )
+    )
     if ed_rows:
         checks.extend(_mc_exact_checks(curve_rows, ed_rows))
         checks.extend(_simultaneous_comparison_checks(_tables(config, "comparison-curves")))

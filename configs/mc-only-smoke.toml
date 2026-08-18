@@ -1,12 +1,12 @@
 schema_version = 2
 
 [campaign]
-name = "mc-only-beyond-ed"
+name = "mc-only-beyond-ed-diagnostics-v2"
 preset = "scaling"
 seed = 12994781566227106604
-output_root = "../artifacts/mc-only-smoke"
+output_root = "../artifacts/mc-only-smoke-diagnostics-v2"
 project_root = ".."
-scratch_root = "../scratch/mc-only-smoke"
+scratch_root = "../scratch/mc-only-smoke-diagnostics-v2"
 
 [lattice]
 sizes = [10]
@@ -27,7 +27,7 @@ clean_saving_interval = 10
 posterior_decorrelation_gap = 30
 inner_measurements = 32
 inner_saving_interval = 2
-updates = ["tnmc"]
+updates = ["tnmc-global"]
 separations = [0, 1, 2, 3, 5]
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 4

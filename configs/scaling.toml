@@ -1,12 +1,12 @@
 schema_version = 2
 
 [campaign]
-name = "scaling"
+name = "scaling-diagnostics-v2"
 preset = "scaling"
 seed = 13503953896175478587
-output_root = "../artifacts/scaling"
+output_root = "../artifacts/scaling-diagnostics-v2"
 project_root = ".."
-scratch_root = "../scratch/scaling"
+scratch_root = "../scratch/scaling-diagnostics-v2"
 
 [lattice]
 sizes = [16, 24, 32, 48, 64]
@@ -28,7 +28,7 @@ clean_saving_interval = 100
 posterior_decorrelation_gap = 500
 inner_measurements = 1024
 inner_saving_interval = 8
-updates = ["tnmc"]
+updates = ["tnmc-global"]
 separations = [0, 1, 2, 4, 8, 12, 16, 24, 32]
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 128

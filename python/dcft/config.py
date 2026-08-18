@@ -112,9 +112,17 @@ class CampaignConfig:
     cluster: ClusterSection
 
     def separations_for(self, lx: int) -> tuple[int, ...]:
+        """Return canonical unoriented distances for reflection-symmetric correlators."""
         if self.mc.separations is None:
             return tuple(range(lx // 2 + 1))
-        values = tuple(sorted(set(value % lx for value in self.mc.separations)))
+        values = tuple(
+            sorted(
+                {
+                    min(value % lx, (-value) % lx)
+                    for value in self.mc.separations
+                }
+            )
+        )
         if not values:
             raise ConfigError("separation grid is empty")
         return values
@@ -353,6 +361,13 @@ def validate_config(config: CampaignConfig) -> None:
         separation < 0 for separation in config.mc.separations
     ):
         problems.append("configured separations must be nonnegative")
+    if config.mc.separations is not None and any(
+        lx // 2 not in config.separations_for(lx) for lx in config.lattice.sizes
+    ):
+        problems.append(
+            "configured separations must include the maximum physical distance floor(lx/2) "
+            "for every lattice size"
+        )
     if config.mc.inner_budget_multipliers != (1, 2, 4):
         problems.append("inner_budget_multipliers must be exactly [1, 2, 4]")
     if not 1 <= config.ed.local_x_enumeration_limit <= 14:

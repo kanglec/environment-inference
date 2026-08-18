@@ -175,6 +175,14 @@ fn tnmc_and_metropolis_agree_with_exact_disordered_ensembles() {
             },
             0x7e11 + case as u64,
         );
+        let tnmc_global = sampled_energy_and_boundary_order(
+            &model,
+            noise,
+            Update::TnmcGlobal {
+                maximum_bond_dimension: 1,
+            },
+            0x9a31 + case as u64,
+        );
         let metropolis_acceptance =
             metropolis.2.local_accepted as f64 / metropolis.2.local_proposed as f64;
         let tnmc_acceptance = tnmc.2.tnmc_accepted as f64 / tnmc.2.tnmc_proposed as f64;
@@ -183,7 +191,14 @@ fn tnmc_and_metropolis_agree_with_exact_disordered_ensembles() {
             metropolis.0, metropolis.1, tnmc.0, tnmc.1
         );
         assert_eq!(tnmc.2.tnmc_conditionals_regularized, 0);
-        for (label, estimate) in [("Metropolis", metropolis), ("TNMC chi=1", tnmc)] {
+        assert_eq!(tnmc.2.global_proposed, 0);
+        assert_eq!(tnmc_global.2.tnmc_conditionals_regularized, 0);
+        assert!(tnmc_global.2.global_proposed > 0);
+        for (label, estimate) in [
+            ("Metropolis", metropolis),
+            ("TNMC chi=1", tnmc),
+            ("TNMC-global chi=1", tnmc_global),
+        ] {
             assert!(
                 (estimate.0 - exact.0).abs() < 0.02,
                 "{label} energy disagrees for {noise:?}: {} versus {}",

@@ -1,12 +1,12 @@
 schema_version = 2
 
 [campaign]
-name = "local-smoke"
+name = "local-smoke-diagnostics-v2"
 preset = "test"
 seed = 42
-output_root = "../artifacts/local-smoke"
+output_root = "../artifacts/local-smoke-diagnostics-v2"
 project_root = ".."
-scratch_root = "../scratch/local-smoke"
+scratch_root = "../scratch/local-smoke-diagnostics-v2"
 
 [lattice]
 sizes = [4]
@@ -27,7 +27,7 @@ clean_saving_interval = 10
 posterior_decorrelation_gap = 20
 inner_measurements = 32
 inner_saving_interval = 2
-updates = ["metropolis", "corrected-wolff", "tnmc"]
+updates = ["metropolis", "corrected-wolff", "tnmc", "tnmc-global"]
 separations = "all"
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 4

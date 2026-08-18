@@ -40,6 +40,77 @@ def _acceptance(accepted: int, proposed: int) -> float | None:
     return accepted / proposed if proposed else None
 
 
+def _trace_moves(values: Any) -> bool:
+    array = np.asarray(values, dtype=np.float64)
+    return bool(array.size >= 2 and np.all(np.isfinite(array)) and np.any(np.diff(array) != 0.0))
+
+
+def _recommend_update(methods: list[dict[str, Any]], *, noise: str) -> dict[str, Any]:
+    eligible: list[dict[str, Any]] = []
+    for method in methods:
+        reasons: list[str] = []
+        autocorrelation = method["autocorrelation"]
+        thermalization = method["thermalization"]
+        efficiency = float(autocorrelation["effective_overlap_samples_per_second"])
+        if not math.isfinite(efficiency) or efficiency <= 0.0:
+            reasons.append("non-finite-or-nonpositive effective sample rate")
+        for metric in ("energy", "planted_overlap"):
+            if not bool(autocorrelation[f"{metric}_trace_moves"]):
+                reasons.append(f"{metric.replace('_', '-')} trace is constant or non-finite")
+            window = int(autocorrelation[metric]["window_lag"])
+            probes = int(autocorrelation["probes"])
+            if probes < max(16, 4 * (window + 1)):
+                reasons.append(f"{metric.replace('_', '-')} trace is too short for its window")
+        rhat_metrics = ["energy", "planted_overlap"]
+        if noise == "z":
+            rhat_metrics.append("boundary_magnetization")
+        for metric in rhat_metrics:
+            rhat = thermalization[f"{metric}_split_rhat"]
+            if rhat is None or float(rhat) > 1.01:
+                reasons.append(f"{metric.replace('_', '-')} split R-hat exceeds 1.01 or is indeterminate")
+        if int(method["acceptance"]["tnmc_conditionals_regularized"]) != 0:
+            reasons.append("TNMC conditional regularization occurred")
+        method["qualification"] = {
+            "eligible_for_recommendation": not reasons,
+            "reasons": reasons,
+        }
+        if not reasons:
+            eligible.append(method)
+    if not eligible:
+        return {
+            "status": "no-qualified-method",
+            "update": None,
+            "criterion": (
+                "largest planted-overlap effective samples per wall second among methods "
+                "passing convergence, movement, trace-length, and numerical gates"
+            ),
+            "qualified_methods": [],
+            "rejections": {
+                str(method["update"]): method["qualification"]["reasons"] for method in methods
+            },
+        }
+    recommendation = max(
+        eligible,
+        key=lambda method: float(
+            method["autocorrelation"]["effective_overlap_samples_per_second"]
+        ),
+    )
+    return {
+        "status": "qualified",
+        "update": recommendation["update"],
+        "criterion": (
+            "largest planted-overlap effective samples per wall second among methods passing "
+            "convergence, movement, trace-length, and numerical gates"
+        ),
+        "qualified_methods": [str(method["update"]) for method in eligible],
+        "rejections": {
+            str(method["update"]): method["qualification"]["reasons"]
+            for method in methods
+            if not method["qualification"]["eligible_for_recommendation"]
+        },
+    }
+
+
 def benchmark_updates(
     config: CampaignConfig,
     *,
@@ -155,6 +226,10 @@ def benchmark_updates(
                     / (2.0 * overlap_autocorrelation.tau_sweeps),
                     "probes": probes,
                     "probe_interval_sweeps": probe_interval,
+                    "energy_trace_moves": _trace_moves(raw["energy_trace"]),
+                    "planted_overlap_trace_moves": _trace_moves(
+                        raw["planted_overlap_trace"]
+                    ),
                 },
                 "thermalization": {
                     "sweeps": thermalization_sweeps,
@@ -188,12 +263,9 @@ def benchmark_updates(
                 },
             }
         )
-    recommendation = max(
-        methods,
-        key=lambda method: float(method["autocorrelation"]["effective_overlap_samples_per_second"]),
-    )["update"]
+    recommendation = _recommend_update(methods, noise=selected_noise)
     report: dict[str, Any] = {
-        "schema": "DCFT_UPDATE_BENCHMARK_V1",
+        "schema": "DCFT_UPDATE_BENCHMARK_V2",
         "software": {
             "package_version": __version__,
             "rust_core_version": _core.version(),
@@ -220,11 +292,7 @@ def benchmark_updates(
             "tnmc_bond_dimension": config.mc.tnmc_bond_dimension,
         },
         "methods": methods,
-        "recommendation": {
-            "update": recommendation,
-            "criterion": "largest planted-overlap effective samples per wall second",
-            "warning": "also require acceptable split R-hat and numerical diagnostics",
-        },
+        "recommendation": recommendation,
     }
     if output is not None:
         destination = output.expanduser().resolve()

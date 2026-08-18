@@ -37,6 +37,7 @@ pub struct DiagnosticTrace {
 pub struct PosteriorJob {
     pub record_couplings: Vec<f64>,
     pub planted_configuration: Vec<u8>,
+    pub initial_configuration: Vec<u8>,
     pub global_id: u64,
     pub stream_label: String,
     pub measurements: usize,
@@ -83,6 +84,7 @@ pub fn sample_posterior(
     noise: Noise,
     record_couplings: Vec<f64>,
     planted_configuration: &[u8],
+    initial_configuration: &[u8],
     update_method: Update,
     seed: u64,
     global_id: u64,
@@ -95,7 +97,7 @@ pub fn sample_posterior(
 ) -> Result<PosteriorResult> {
     if decorrelation_gap == 0 {
         return Err(DcftError::invalid(
-            "a positive planted-replica decorrelation gap is mandatory",
+            "a positive posterior decorrelation or convergence-thermalization gap is mandatory",
         ));
     }
     if measurements == 0 || saving_interval == 0 {
@@ -106,8 +108,8 @@ pub fn sample_posterior(
     if stream_label.is_empty() {
         return Err(DcftError::invalid("posterior stream label cannot be empty"));
     }
-    let mut lattice = Lattice::unpack(lx, lt, planted_configuration)?;
-    let planted_boundary = lattice.boundary().to_vec();
+    let planted = Lattice::unpack(lx, lt, planted_configuration)?;
+    let planted_boundary = planted.boundary().to_vec();
     let planted_bonds: Vec<i8> = planted_boundary
         .iter()
         .zip(planted_boundary.iter().cycle().skip(1))
@@ -115,6 +117,7 @@ pub fn sample_posterior(
         .map(|(left, right)| left * right)
         .collect();
     let model = Model::posterior(lx, lt, couplings, noise, record_couplings)?;
+    let mut lattice = Lattice::unpack(lx, lt, initial_configuration)?;
     let domain = format!("posterior/{}/{stream_label}", update_method.as_str());
     let mut rng = Rng64::stream(seed, &domain, global_id);
     let mut statistics = UpdateStats::default();
@@ -211,6 +214,7 @@ pub fn sample_posteriors_parallel(
                     noise,
                     job.record_couplings,
                     &job.planted_configuration,
+                    &job.initial_configuration,
                     update_method,
                     seed,
                     job.global_id,

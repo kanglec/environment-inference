@@ -31,6 +31,7 @@ struct ChainTrace {
     energy: Vec<f64>,
     boundary_magnetization: Vec<f64>,
     planted_overlap: Vec<f64>,
+    updates: UpdateStats,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -158,6 +159,9 @@ pub fn benchmark_update(
             "parallel thermalization changed deterministic chain results",
         ));
     }
+    for trace in &thermalization {
+        accumulate_update_statistics(&mut updates, trace.updates);
+    }
 
     Ok(UpdateBenchmark {
         update: update.as_str(),
@@ -235,6 +239,7 @@ fn thermalization_chain(
         energy: Vec::with_capacity(measurements),
         boundary_magnetization: Vec::with_capacity(measurements),
         planted_overlap: Vec::with_capacity(measurements),
+        updates: UpdateStats::default(),
     };
     for _ in 0..measurements {
         apply_sweeps(
@@ -251,7 +256,24 @@ fn thermalization_chain(
         trace.boundary_magnetization.push(boundary_magnetization);
         trace.planted_overlap.push(planted_overlap);
     }
+    trace.updates = statistics;
     Ok(trace)
+}
+
+fn accumulate_update_statistics(total: &mut UpdateStats, added: UpdateStats) {
+    total.sweeps += added.sweeps;
+    total.local_proposed += added.local_proposed;
+    total.local_accepted += added.local_accepted;
+    total.cluster_proposed += added.cluster_proposed;
+    total.cluster_accepted += added.cluster_accepted;
+    total.cluster_sites_proposed += added.cluster_sites_proposed;
+    total.global_proposed += added.global_proposed;
+    total.global_attempted += added.global_attempted;
+    total.global_accepted += added.global_accepted;
+    total.tnmc_proposed += added.tnmc_proposed;
+    total.tnmc_accepted += added.tnmc_accepted;
+    total.tnmc_sites_proposed += added.tnmc_sites_proposed;
+    total.tnmc_conditionals_regularized += added.tnmc_conditionals_regularized;
 }
 
 fn observables(

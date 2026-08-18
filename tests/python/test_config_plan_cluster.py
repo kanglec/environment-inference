@@ -50,7 +50,7 @@ def test_project_and_scratch_separation_is_enforced(
     ("before", "after", "message"),
     [
         (
-            'updates = ["metropolis", "corrected-wolff", "tnmc"]',
+            'updates = ["metropolis", "corrected-wolff", "tnmc", "tnmc-global"]',
             'updates = ["metropolis", "metropolis"]',
             "duplicates",
         ),
@@ -64,6 +64,7 @@ def test_project_and_scratch_separation_is_enforced(
         ("tnmc_bond_dimension = 8", "tnmc_bond_dimension = 0", "positive"),
         ("mc_chunks = 2", "mc_chunks = 17", "cannot exceed"),
         ("local_workers = 4", "local_workers = 0", "positive"),
+        ('separations = "all"', "separations = [0, 1]", "maximum physical distance"),
     ],
 )
 def test_strict_configuration_rejects_ambiguous_campaigns(
@@ -83,6 +84,20 @@ def test_chunk_ranges_are_balanced_and_complete() -> None:
     assert chunk_ranges(10, 3) == ((0, 4), (4, 7), (7, 10))
     with pytest.raises(ValueError, match="chunks"):
         chunk_ranges(2, 3)
+
+
+def test_scaling_separations_are_canonical_and_include_half_system(
+    project_root: Path,
+) -> None:
+    config = load_config(project_root / "configs" / "scaling.toml")
+    expected = {
+        16: (0, 1, 2, 4, 8),
+        24: (0, 1, 2, 4, 8, 12),
+        32: (0, 1, 2, 4, 8, 12, 16),
+        48: (0, 1, 2, 4, 8, 12, 16, 24),
+        64: (0, 1, 2, 4, 8, 12, 16, 24, 32),
+    }
+    assert {lx: config.separations_for(lx) for lx in config.lattice.sizes} == expected
 
 
 def test_plan_chunks_mc_and_merges_each_parameter_point(smoke_config_path: Path) -> None:
@@ -105,6 +120,16 @@ def test_plan_chunks_mc_and_merges_each_parameter_point(smoke_config_path: Path)
     assert clean.task_id in analysis.dependencies
     assert all(task.task_id not in analysis.dependencies for task in chunks)
     assert validation.dependencies == (analysis.task_id,)
+    tnmc_tasks = [
+        task
+        for task in plan.tasks
+        if task.kind in {"mc", "merge"} and task.parameters["update"].startswith("tnmc")
+    ]
+    assert {task.parameters["update"] for task in tnmc_tasks} == {"tnmc", "tnmc-global"}
+    assert all(
+        task.parameters["tnmc_bond_dimension"] == config.mc.tnmc_bond_dimension
+        for task in tnmc_tasks
+    )
     update_task_state(config, clean.task_id, "complete", artifacts=("abc",))
     assert read_state(config)["tasks"][clean.task_id]["artifacts"] == ["abc"]
     write_plan(config)

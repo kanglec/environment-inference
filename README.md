@@ -176,14 +176,18 @@ Use a new `campaign.name` and `output_root` for a new scientific request.
 
 Rust provides periodic lattices, clean Wolff generation, random and sequential
 Metropolis, lazy global Metropolis, corrected Wolff, periodic TNMC, deterministic
-keyed xoshiro256++ streams, and observable accumulation. TNMC freezes a random
-row and column, contracts the remaining open rectangle with a truncated
-boundary MPS, and applies the exact Hastings correction.
+keyed xoshiro256++ streams, and observable accumulation. `tnmc` is the pure
+reversible conditional proposal specified in the simulation contract;
+`tnmc-global` explicitly composes it with the lazy global Metropolis move. Both
+freeze a random row and column, contract the remaining open rectangle with a
+truncated boundary MPS, and apply the exact Hastings correction.
 
 Python provides configuration and DAG planning, dense TFIM exact
 diagonalization, finite-transfer and transfer-ground priors, Parquet artifacts,
 Geyer autocorrelation estimates, moving-block resampling, I--MMSE integration,
 analysis, plotting, validation, Slurm rendering, and update benchmarks.
+Production estimators retain the exact planted posterior initialization, while
+separate all-plus/all-minus/random chains supply convergence diagnostics.
 
 Scientific results remain content-addressed Parquet artifacts with checksums,
 parent links, source digests, complete parameter metadata, and deterministic

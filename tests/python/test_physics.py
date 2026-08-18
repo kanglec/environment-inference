@@ -96,6 +96,15 @@ def test_local_x_channel_normalizes() -> None:
         assert all(probability >= 0.0 for probability in probabilities)
 
 
+def test_local_x_remains_finite_near_projective_endpoint() -> None:
+    p = 0.499_999_999_999
+    parameters = _core.protocol_parameters("local-x", p)
+    assert 0.0 < parameters["error_probability"] < 1.0e-20
+    assert math.isfinite(parameters["coupling"])
+    generated = _core.generate_record([1, -1, 1, -1], "z", "local-x", p, 9, 3)
+    assert all(math.isfinite(value) for value in generated["record_couplings"])
+
+
 def test_outer_id_results_are_order_and_thread_key_independent() -> None:
     boundary = [1, -1, -1, 1]
     ids = list(range(12))
@@ -127,6 +136,7 @@ def test_mc_bytes_do_not_depend_on_thread_count_environment(
             kt,
             "z",
             record["record_couplings"],
+            clean[1],
             clean[1],
             "metropolis",
             71,
@@ -164,6 +174,7 @@ def test_parallel_posterior_batch_preserves_order_and_results() -> None:
         "z",
         records,
         planted,
+        planted,
         "metropolis",
         91,
         list(range(4)),
@@ -193,6 +204,7 @@ def test_tnmc_python_entry_point_reports_block_statistics(noise: str) -> None:
         kt,
         noise,
         record["record_couplings"],
+        clean,
         clean,
         "tnmc",
         913,

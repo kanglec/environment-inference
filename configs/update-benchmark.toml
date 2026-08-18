@@ -1,12 +1,12 @@
 schema_version = 2
 
 [campaign]
-name = "update-benchmark"
+name = "update-benchmark-diagnostics-v2"
 preset = "test"
 seed = 6840227781351331448
-output_root = "../artifacts/update-benchmark"
+output_root = "../artifacts/update-benchmark-diagnostics-v2"
 project_root = ".."
-scratch_root = "../scratch/update-benchmark"
+scratch_root = "../scratch/update-benchmark-diagnostics-v2"
 
 [lattice]
 sizes = [8]
@@ -27,7 +27,7 @@ clean_saving_interval = 20
 posterior_decorrelation_gap = 32
 inner_measurements = 64
 inner_saving_interval = 2
-updates = ["metropolis", "sequential-metropolis", "metropolis-global", "corrected-wolff", "tnmc"]
+updates = ["metropolis", "sequential-metropolis", "metropolis-global", "corrected-wolff", "tnmc", "tnmc-global"]
 separations = "all"
 inner_budget_multipliers = [1, 2, 4]
 diagnostic_outer_records = 4
